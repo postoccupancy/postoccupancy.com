@@ -23,6 +23,7 @@ Updated 2026-09-24. This file records agreed direction and implementation contex
 - Do not modify the working Pi/ESP32 infrastructure as a side effect of website work. No Next.js proxy, Supabase integration, camera controls, device restart controls, or extra status polling has been requested. Revisit those only when needed and agreed.
 - The user prefers simple proposals and direct implementation within the agreed scope. Avoid overengineering and repeatedly asking for permission already given.
 - Commit completed, verified units of work with descriptive messages. Inspect the working tree first and include only relevant files; preserve unrelated user changes. Do not push or deploy merely because a local commit was requested.
+- Update `AGENTS.md` with every commit and include that update in the same commit. Record the relevant changes, decisions, validation, and remaining work so future sessions have current context. For changes that do not affect architecture, a brief context or verification note is sufficient; do not invent new decisions or duplicate the entire history.
 
 ## Workspace and source material
 
