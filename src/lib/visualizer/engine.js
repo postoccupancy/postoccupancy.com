@@ -1,0 +1,1254 @@
+// Rendering, buffering, PCM decoding, and audio processing adapted from
+// signal-router/visualizer/index.html. Kept as JavaScript to preserve the existing
+// implementation; React owns the surrounding page, this module owns its surface.
+import * as SpectralAnalysis from './spectral-analysis';
+import { ModulationAnalysis } from './modulation-analysis';
+import { connectVisualizer } from './connection';
+function readStorage(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function writeStorage(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {/* Optional calibration persistence. */}
+}
+/**
+ * @param {HTMLElement} root
+ * @param {string} device
+ * @param {import('../signals/router-client').RouterClient} router
+ */
+export function mountVisualizer(root, device, router) {
+  let disposed = false,
+    animationFrame = 0;
+  const events = new AbortController(),
+    scheduled = new Set();
+  const {
+    deviceLabel,
+    audio,
+    aggregate,
+    aggregateValue,
+    bufferControl,
+    bufferValue,
+    gainControl,
+    gainValue,
+    frequencyScale,
+    windowControl,
+    windowValue,
+    fftPower,
+    fftValue,
+    welchControl,
+    welchValue,
+    bandAverage,
+    spectrumMode,
+    smooth,
+    centroidEnabled,
+    modulationPalette,
+    connection,
+    sourceStats,
+    shown,
+    cursorValue,
+    missing,
+    arrival,
+    audioBuffer,
+    underruns,
+    outputPeak,
+    clipping,
+    centroidValue,
+    spectralColor,
+    psdStats,
+    audioError
+  } = Object.fromEntries([...root.querySelectorAll("[data-viz]")].map(el => [el.dataset.viz, el]));
+  const isPcm = device.startsWith('pcm/'),
+    derivedMatch = device.match(/^osc\/([^/]+)\/(bass|mid|high|centroid)$/);
+  deviceLabel.textContent = device || 'no device selected';
+  const canvas = root.querySelector('[data-viz=canvas]'),
+    ctx = canvas.getContext('2d'),
+    spectro = document.createElement('canvas'),
+    sctx = spectro.getContext('2d'),
+    modulation = new ModulationAnalysis(),
+    modulationField = document.createElement('canvas'),
+    modulationFieldContext = modulationField.getContext('2d');
+  const windows = [.001, .002, .005, .01, .02, .043, .05, .1, .25, .5, 1, 2, 5, 10, 30, 60],
+    aggregates = [0, 4, 10, 20, 50, 100, 250, 500, 1000],
+    buffers = [.25, .5, 1, 2, 5];
+  const welchSegments = [1, 2, 4, 8, 16];
+  let view = 'wave',
+    windowSeconds = .043,
+    frequencyMode = 'log',
+    spectralMode = 'raw',
+    lastDraw = 0,
+    lastSpectro = 0,
+    unit = '',
+    sourceRate = 0,
+    spectralRate = 0,
+    lastSampleTime = null,
+    lastArrival = 0,
+    maxArrival = 0,
+    missingCount = 0,
+    lastSequence = null,
+    pcmSampleSequence = 0,
+    waveHover = [],
+    lastSpectrum = null,
+    lastModulation = null,
+    modulationMissingCount = 0,
+    scalarFullScale = isPcm ? 0 : Number(readStorage(`rf.scalarFullScale.${device}`)) || 0;
+  if (derivedMatch) {
+    windowSeconds = 2;
+    windowControl.value = 11;
+    windowValue.textContent = '2 s';
+  }
+  class ChunkRing {
+    constructor() {
+      this.chunks = [];
+      this.sampleCount = 0;
+      this.latestTime = 0;
+    }
+    push(values, times, sequenceStart, rate) {
+      if (!values.length) return;
+      const chunk = {
+        values,
+        times,
+        sequenceStart,
+        rate
+      };
+      this.chunks.push(chunk);
+      this.sampleCount += values.length;
+      this.latestTime = times ? times[times.length - 1] : chunk.t0 + (values.length - 1) * 1e6 / rate;
+      const cutoff = this.latestTime - 120e6;
+      while (this.chunks.length && (this.end(this.chunks[0]) < cutoff || this.sampleCount > 2000000 || this.chunks.length > 12000)) {
+        this.sampleCount -= this.chunks[0].values.length;
+        this.chunks.shift();
+      }
+    }
+    pushRegular(values, t0, sequenceStart, rate) {
+      const chunk = {
+        values,
+        t0,
+        sequenceStart,
+        rate,
+        times: null
+      };
+      this.chunks.push(chunk);
+      this.sampleCount += values.length;
+      this.latestTime = t0 + (values.length - 1) * 1e6 / rate;
+      const cutoff = this.latestTime - 120e6;
+      while (this.chunks.length && (this.end(this.chunks[0]) < cutoff || this.sampleCount > 2000000 || this.chunks.length > 12000)) {
+        this.sampleCount -= this.chunks[0].values.length;
+        this.chunks.shift();
+      }
+    }
+    end(c) {
+      return c.times ? c.times[c.times.length - 1] : c.t0 + (c.values.length - 1) * 1e6 / c.rate;
+    }
+    visit(seconds, fn) {
+      const cutoff = this.latestTime - seconds * 1e6;
+      for (const c of this.chunks) {
+        if (this.end(c) < cutoff) continue;
+        for (let i = 0; i < c.values.length; i++) {
+          const t = c.times ? c.times[i] : c.t0 + i * 1e6 / c.rate;
+          if (t >= cutoff) fn(c.values[i], t);
+        }
+      }
+    }
+    count(seconds) {
+      let n = 0;
+      this.visit(seconds, () => n++);
+      return n;
+    }
+    lastValues(wanted) {
+      const n = Math.min(wanted, this.sampleCount),
+        out = new Float64Array(n);
+      let at = n;
+      for (let ci = this.chunks.length - 1; ci >= 0 && at > 0; ci--) {
+        const a = this.chunks[ci].values,
+          take = Math.min(at, a.length);
+        at -= take;
+        out.set(a.subarray(a.length - take), at);
+      }
+      return at ? out.subarray(at) : out;
+    }
+    lastValuesBefore(wanted, endTime) {
+      const out = new Float64Array(Math.min(wanted, this.sampleCount));
+      let at = out.length;
+      for (let ci = this.chunks.length - 1; ci >= 0 && at > 0; ci--) {
+        const c = this.chunks[ci],
+          a = c.values;
+        if ((c.times ? c.times[0] : c.t0) > endTime) continue;
+        let end = a.length;
+        if (c.times) {
+          while (end > 0 && c.times[end - 1] > endTime) end--;
+        } else end = Math.min(end, Math.floor((endTime - c.t0) * c.rate / 1e6) + 1);
+        const take = Math.min(at, Math.max(0, end));
+        if (take) {
+          at -= take;
+          out.set(a.subarray(end - take, end), at);
+        }
+      }
+      return at ? out.subarray(at) : out;
+    }
+  }
+  const ring = new ChunkRing();
+  function resizePreserving(c, cx, w, h) {
+    if (c.width === w && c.height === h) return;
+    const copy = document.createElement('canvas');
+    copy.width = c.width;
+    copy.height = c.height;
+    if (copy.width && copy.height) copy.getContext('2d').drawImage(c, 0, 0);
+    c.width = w;
+    c.height = h;
+    if (copy.width && copy.height) cx.drawImage(copy, 0, 0, copy.width, copy.height, 0, 0, w, h);
+  }
+  function resize() {
+    const d = devicePixelRatio || 1,
+      w = Math.max(1, root.clientWidth),
+      h = Math.max(280, Math.min(640, window.innerHeight * .55)),
+      pw = Math.floor(w * d),
+      ph = Math.floor(h * d);
+    if (canvas.width !== pw || canvas.height !== ph) {
+      canvas.width = pw;
+      canvas.height = ph;
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+    }
+    ctx.setTransform(d, 0, 0, d, 0, 0);
+    resizePreserving(spectro, sctx, pw, ph);
+  }
+  const observer = new ResizeObserver(resize);
+  observer.observe(root);
+  resize();
+  canvas.addEventListener('mousemove', event => {
+    const rect = canvas.getBoundingClientRect(),
+      x = event.clientX - rect.left,
+      y = event.clientY - rect.top,
+      nx = Math.max(0, Math.min(1, x / rect.width)),
+      ny = Math.max(0, Math.min(1, y / rect.height));
+    if (view === 'wave' && waveHover.length) {
+      let best = waveHover[0];
+      for (const p of waveHover) if (Math.abs(p.x - x) < Math.abs(best.x - x)) best = p;
+      cursorValue.textContent = `${((best.t - ring.latestTime) / 1e6).toFixed(3)} s · ${best.v.toFixed(5)} ${unit}`;
+    } else if (view === 'modulation' && lastModulation) {
+      const m = lastModulation,
+        base = modulationFrequencyAtPosition(1 - ny, m),
+        mod = nx < 1 / (modulation.modulationBins + 1) ? 0 : m.minModulation * (m.maxModulation / m.minModulation) ** Math.max(0, (nx * (modulation.modulationBins + 1) - 1) / modulation.modulationBins);
+      cursorValue.textContent = `${base.toFixed(3)} Hz carrier · ${mod ? mod.toFixed(3) + ' Hz modulation' : 'steady/current'}`;
+    } else if (lastSpectrum?.points?.length) {
+      const position = view === 'spectrogram' ? 1 - ny : nx,
+        hz = frequencyAtPosition(position, lastSpectrum.points);
+      if (view === 'spectrum') {
+        if (spectralMode === 'filtered') {
+          const ratio = 2 ** (3 - 4 * ny);
+          cursorValue.textContent = `${hz.toFixed(3)} Hz · ${ratio.toFixed(2)}×`;
+        } else cursorValue.textContent = `${hz.toFixed(3)} Hz · ${(-100 * ny).toFixed(1)} ${isPcm ? 'dBFS' : 'dB eq'}`;
+      } else cursorValue.textContent = `${hz.toFixed(3)} Hz · ${((rect.width - x) / 30).toFixed(2)} s ago`;
+    }
+  }, {
+    signal: events.signal
+  });
+  canvas.addEventListener('mouseleave', () => cursorValue.textContent = '—', {
+    signal: events.signal
+  });
+  function updateControlVisibility() {
+    root.querySelectorAll('.wave-control').forEach(control => control.hidden = view !== 'wave');
+    root.querySelectorAll('.spectral-control').forEach(control => control.hidden = view === 'wave');
+    root.querySelectorAll('.regular-spectral-control').forEach(control => control.hidden = view === 'wave' || view === 'modulation');
+    root.querySelectorAll('.image-control').forEach(control => control.hidden = view !== 'spectrogram' && view !== 'modulation');
+    root.querySelectorAll('.modulation-control').forEach(control => control.hidden = view !== 'modulation');
+  }
+  root.querySelectorAll('.view').forEach(b => b.onclick = () => {
+    view = b.dataset.view;
+    root.querySelectorAll('.view').forEach(x => {
+      x.classList.toggle('active', x === b);
+      x.setAttribute('aria-pressed', String(x === b));
+    });
+    updateControlVisibility();
+  });
+  updateControlVisibility();
+  windowControl.oninput = () => {
+    windowSeconds = windows[+windowControl.value];
+    windowValue.textContent = windowSeconds + ' s';
+    if (waveformAnalyser) {
+      const wanted = windowSeconds * audioCtx.sampleRate,
+        power = Math.round(Math.log2(Math.max(32, Math.min(32768, wanted))));
+      waveformAnalyser.fftSize = 2 ** power;
+    }
+  };
+  aggregate.oninput = () => {
+    const ms = aggregates[+aggregate.value];
+    aggregateValue.textContent = ms ? ms + ' ms' : 'off';
+    resetAggregation();
+    if (lowRateNode) lowRateNode.port.postMessage({
+      type: 'config',
+      aggregationMs: ms
+    });
+  };
+  bufferControl.oninput = () => {
+    bufferValue.textContent = buffers[+bufferControl.value] + ' s';
+    if (lowRateNode) lowRateNode.port.postMessage({
+      type: 'config',
+      bufferSeconds: buffers[+bufferControl.value]
+    });
+  };
+  function gainAmount() {
+    return 2 ** Number(gainControl.value);
+  }
+  function formatGain(v) {
+    return v < 1 ? v.toFixed(3).replace(/0+$/, '').replace(/\.$/, '') + '×' : v + '×';
+  }
+  gainControl.oninput = () => {
+    gainValue.textContent = formatGain(gainAmount());
+    if (gainNode) gainNode.gain.setTargetAtTime(audioOn ? gainAmount() : 0, audioCtx.currentTime, .02);
+  };
+  fftPower.oninput = () => {
+    fftValue.textContent = 2 ** Number(fftPower.value);
+    modulation.reset();
+  };
+  frequencyScale.onclick = () => {
+    const m = ['expanded', 'log', 'linear'];
+    frequencyMode = m[(m.indexOf(frequencyMode) + 1) % m.length];
+    frequencyScale.textContent = 'frequency: ' + frequencyMode;
+  };
+  welchControl.oninput = () => {
+    welchValue.textContent = welchSegments[+welchControl.value];
+    modulation.reset();
+  };
+  bandAverage.onchange = () => modulation.reset();
+  spectrumMode.onclick = () => {
+    spectralMode = spectralMode === 'raw' ? 'filtered' : 'raw';
+    spectrumMode.textContent = 'spectrum: ' + spectralMode;
+    modulation.reset();
+  };
+  const IMA_INDEX = [-1, -1, -1, -1, 2, 4, 6, 8],
+    IMA_STEP = [7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66, 73, 80, 88, 97, 107, 118, 130, 143, 157, 173, 190, 209, 230, 253, 279, 307, 337, 371, 408, 449, 494, 544, 598, 658, 724, 796, 876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066, 2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871, 5358, 5894, 6484, 7132, 7845, 8630, 9493, 10442, 11487, 12635, 13899, 15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767];
+  function decodePcm(data, bits, count, header) {
+    const out = new Float32Array(count);
+    if (bits === 16) {
+      for (let i = 0; i < count; i++) out[i] = data.getInt16(header + i * 2, true) / 32768;
+      return out;
+    }
+    let predictor = data.getInt16(32, true),
+      index = Math.max(0, Math.min(88, data.getUint8(34)));
+    out[0] = predictor / 32768;
+    for (let i = 1; i < count; i++) {
+      const packed = data.getUint8(header + Math.floor((i - 1) / 2)),
+        code = i & 1 ? packed & 15 : packed >> 4,
+        step = IMA_STEP[index];
+      let delta = step >> 3;
+      if (code & 4) delta += step;
+      if (code & 2) delta += step >> 1;
+      if (code & 1) delta += step >> 2;
+      predictor += code & 8 ? -delta : delta;
+      predictor = Math.max(-32768, Math.min(32767, predictor));
+      index = Math.max(0, Math.min(88, index + IMA_INDEX[code & 7]));
+      out[i] = predictor / 32768;
+    }
+    return out;
+  }
+  function noteArrival() {
+    const now = performance.now();
+    if (lastArrival) maxArrival = Math.max(maxArrival, now - lastArrival);
+    lastArrival = now;
+  }
+  function nominalRate(rate) {
+    return rate >= 10 ? Math.round(rate) : Math.round(rate * 10) / 10;
+  }
+  function ingestScalar(incoming, newUnit) {
+    if (!incoming.length) return;
+    if (lastSampleTime !== null && incoming[0][1] < lastSampleTime - 1000000) resetSignal();
+    incoming = incoming.filter(s => lastSequence === null || s[1] >= lastSampleTime && s[0] - lastSequence >>> 0 > 0 && s[0] - lastSequence >>> 0 < 0x80000000);
+    if (!incoming.length) return;
+    noteArrival();
+    const values = new Float32Array(incoming.length),
+      times = new Float64Array(incoming.length);
+    for (let i = 0; i < incoming.length; i++) {
+      const s = incoming[i],
+        delta = lastSequence === null ? 1 : s[0] - lastSequence >>> 0;
+      if (lastSequence !== null && delta !== 1) missingCount += Math.max(0, delta - 1);
+      lastSequence = s[0];
+      times[i] = s[1];
+      values[i] = s[2];
+    }
+    unit = newUnit || unit;
+    let measured = estimateRate(times);
+    if (!measured && lastSampleTime !== null && times[0] > lastSampleTime) measured = 1e6 / (times[0] - lastSampleTime);
+    lastSampleTime = times[times.length - 1];
+    if (measured > 0) {
+      sourceRate = sourceRate ? sourceRate * .95 + measured * .05 : measured;
+      if (!spectralRate || Math.abs(measured - spectralRate) / spectralRate > .1) spectralRate = nominalRate(measured);
+    }
+    ring.push(values, times, incoming[0][0], sourceRate);
+    feedAudio(values, sourceRate);
+  }
+  function ingestPcm(data) {
+    if (data.byteLength < 32 || String.fromCharCode(data.getUint8(0), data.getUint8(1), data.getUint8(2), data.getUint8(3)) !== 'ESAU') return;
+    const bits = data.getUint8(6),
+      seq = data.getUint32(8, true),
+      t0 = Number(data.getBigUint64(12, true)),
+      rate = data.getUint32(20, true),
+      count = data.getUint16(24, true),
+      header = data.getUint16(26, true),
+      payload = bits === 16 ? count * 2 : bits === 4 ? Math.ceil((count - 1) / 2) : -1;
+    if (data.getUint8(4) !== 1 || data.getUint8(5) !== 1 || !count || !rate || rate > 192000 || header < 32 || payload < 0 || header + payload !== data.byteLength || bits === 4 && header < 36) return;
+    if (lastSampleTime !== null && t0 < lastSampleTime - 1000000) resetSignal();
+    const delta = lastSequence === null ? 1 : seq - lastSequence >>> 0;
+    if (lastSequence !== null && (delta === 0 || delta >= 0x80000000)) return;
+    noteArrival();
+    missingCount += Math.max(0, delta - 1);
+    lastSequence = seq;
+    lastSampleTime = t0;
+    sourceRate = rate;
+    spectralRate = rate;
+    unit = 'amplitude';
+    const values = decodePcm(data, bits, count, header);
+    ring.pushRegular(values, t0, pcmSampleSequence, rate);
+    pcmSampleSequence += count;
+    feedAudio(values, rate);
+  }
+  function estimateRate(times) {
+    return times.length > 1 && times[times.length - 1] > times[0] ? (times.length - 1) * 1e6 / (times[times.length - 1] - times[0]) : 0;
+  }
+  const workletCode = `
+class LowRateSource extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.q = [];
+    this.rate = 100;
+    this.phase = 0;
+    this.a = 0;
+    this.b = 0;
+    this.hold = 0;
+    this.haveHold = false;
+    this.started = false;
+    this.aggregationMs = 0;
+    this.bufferSeconds = 1;
+    this.window = [];
+    this.sum = 0;
+    this.hpInput = null;
+    this.hpOutput = 0;
+    this.underruns = 0;
+    this.tick = 0;
+    this.port.onmessage = e => {
+      const d = e.data;
+      if (d.type === 'reset') {
+        this.q = [];
+        this.started = false;
+        this.phase = 0;
+        this.window = [];
+        this.sum = 0;
+        this.haveHold = false;
+        this.hpInput = null;
+        this.hpOutput = 0;
+        return;
+      }
+      if (d.type === 'config') {
+        if (d.aggregationMs !== undefined) {
+          this.aggregationMs = d.aggregationMs || 0;
+          this.window = [];
+          this.sum = 0;
+        }
+        if (d.bufferSeconds !== undefined) this.bufferSeconds = d.bufferSeconds;
+        return;
+      }
+      if (d.rate > 0) this.rate = d.rate;
+      const n = Math.max(1, Math.round(this.rate * this.aggregationMs / 1000)),
+        coefficient = Math.exp(-2 * Math.PI * .1 / this.rate);
+      for (const raw of d.samples || []) {
+        const filtered = this.hpInput === null ? 0 : coefficient * (this.hpOutput + raw - this.hpInput);
+        this.hpInput = raw;
+        this.hpOutput = filtered;
+        this.window.push(filtered);
+        this.sum += filtered;
+        if (this.window.length > n) this.sum -= this.window.shift();
+        this.q.push(this.sum / this.window.length);
+      }
+      const cap = Math.ceil(this.rate * Math.max(10, this.bufferSeconds * 2));
+      if (this.q.length > cap) this.q.splice(0, this.q.length - cap);
+    };
+  }
+  process(i, o) {
+    const out = o[0][0],
+      target = Math.max(4, Math.ceil(this.rate * this.bufferSeconds));
+    if (!this.started && this.q.length >= target) {
+      if (!this.haveHold) {
+        this.hold = this.q.shift();
+        this.haveHold = true;
+      }
+      this.a = this.hold;
+      this.b = this.q.shift();
+      this.phase = 0;
+      this.started = true;
+    }
+    const correction = Math.max(.995, Math.min(1.005, 1 + (this.q.length / this.rate - this.bufferSeconds) * .002)),
+      step = this.rate * correction / sampleRate;
+    for (let x = 0; x < out.length; x++) {
+      if (!this.started) {
+        out[x] = this.hold;
+        continue;
+      }
+      out[x] = this.a + (this.b - this.a) * this.phase;
+      this.hold = out[x];
+      this.phase += step;
+      while (this.phase >= 1) {
+        this.phase--;
+        this.a = this.b;
+        if (this.q.length) this.b = this.q.shift();else {
+          this.hold = this.a;
+          this.started = false;
+          this.underruns++;
+          break;
+        }
+      }
+    }
+    this.tick -= out.length;
+    if (this.tick <= 0) {
+      this.tick = sampleRate / 5;
+      this.port.postMessage({
+        buffer: this.q.length / this.rate,
+        underruns: this.underruns
+      });
+    }
+    return true;
+  }
+}
+class SignalMeter extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.peak = 0;
+    this.clips = 0;
+    this.tick = 0;
+  }
+  process(i, o) {
+    const input = i[0]?.[0],
+      out = o[0][0];
+    for (let x = 0; x < out.length; x++) {
+      const v = input ? input[x] : 0;
+      out[x] = v;
+      const a = Math.abs(v);
+      this.peak = Math.max(this.peak, a);
+      if (a >= 1) this.clips++;
+    }
+    this.tick -= out.length;
+    if (this.tick <= 0) {
+      this.tick = sampleRate / 5;
+      this.port.postMessage({
+        peak: this.peak,
+        clips: this.clips
+      });
+      this.peak = 0;
+    }
+    return true;
+  }
+}
+registerProcessor('low-rate-source', LowRateSource);
+registerProcessor('signal-meter', SignalMeter);
+`;
+  let audioCtx = null,
+    lowRateNode = null,
+    reconstruction = null,
+    baselineFilter = null,
+    normalizationNode = null,
+    gainNode = null,
+    waveformAnalyser = null,
+    meterNode = null,
+    audioOn = false,
+    nextStart = 0,
+    nativeUnderruns = 0,
+    aggregationState = [];
+  function resetAggregation() {
+    aggregationState = [];
+  }
+  function setScalarFullScale(value) {
+    scalarFullScale = value;
+    if (!isPcm && value > 0) writeStorage(`rf.scalarFullScale.${device}`, String(value));
+  }
+  function initializeScalarFullScale() {
+    if (isPcm || scalarFullScale) return;
+    const values = ring.lastValues(Math.min(ring.sampleCount, Math.max(16, Math.round(sourceRate * 2))));
+    if (values.length < 2) return;
+    let mean = 0;
+    for (const value of values) mean += value;
+    mean /= values.length;
+    let peak = 0;
+    for (const value of values) peak = Math.max(peak, Math.abs(value - mean));
+    if (peak) setScalarFullScale(peak * 16);
+  }
+  function updateNormalization() {
+    if (normalizationNode) normalizationNode.gain.setTargetAtTime(isPcm ? 1 : 1 / (scalarFullScale || 1), audioCtx.currentTime, .02);
+  }
+  async function createAudio() {
+    initializeScalarFullScale();
+    audioCtx = new AudioContext();
+    const url = URL.createObjectURL(new Blob([workletCode], {
+      type: 'application/javascript'
+    }));
+    try {
+      await audioCtx.audioWorklet.addModule(url);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+    if (disposed) return;
+    lowRateNode = new AudioWorkletNode(audioCtx, 'low-rate-source', {
+      numberOfInputs: 0,
+      numberOfOutputs: 1,
+      outputChannelCount: [1]
+    });
+    reconstruction = audioCtx.createBiquadFilter();
+    reconstruction.type = 'lowpass';
+    baselineFilter = audioCtx.createBiquadFilter();
+    baselineFilter.type = 'highpass';
+    baselineFilter.frequency.value = .1;
+    baselineFilter.Q.value = .707;
+    normalizationNode = audioCtx.createGain();
+    normalizationNode.gain.value = isPcm ? 1 : 1 / (scalarFullScale || 1);
+    gainNode = audioCtx.createGain();
+    gainNode.gain.value = 0;
+    waveformAnalyser = audioCtx.createAnalyser();
+    waveformAnalyser.fftSize = 2048;
+    waveformAnalyser.smoothingTimeConstant = .8;
+    meterNode = new AudioWorkletNode(audioCtx, 'signal-meter');
+    lowRateNode.connect(reconstruction);
+    reconstruction.connect(baselineFilter).connect(normalizationNode).connect(gainNode).connect(waveformAnalyser).connect(meterNode).connect(audioCtx.destination);
+    lowRateNode.port.onmessage = e => {
+      audioBuffer.textContent = e.data.buffer.toFixed(2) + ' s';
+      underruns.textContent = e.data.underruns + nativeUnderruns;
+    };
+    meterNode.port.onmessage = e => {
+      outputPeak.textContent = e.data.peak.toFixed(3);
+      clipping.textContent = e.data.clips;
+    };
+    lowRateNode.port.postMessage({
+      type: 'config',
+      aggregationMs: aggregates[+aggregate.value],
+      bufferSeconds: buffers[+bufferControl.value]
+    });
+  }
+  function aggregateSamples(values, rate) {
+    const ms = aggregates[+aggregate.value],
+      n = Math.max(1, Math.round(rate * ms / 1000));
+    if (n === 1) return values;
+    const out = new Float32Array(values.length);
+    let sum = aggregationState.reduce((a, b) => a + b, 0);
+    for (let i = 0; i < values.length; i++) {
+      aggregationState.push(values[i]);
+      sum += values[i];
+      if (aggregationState.length > n) sum -= aggregationState.shift();
+      out[i] = sum / aggregationState.length;
+    }
+    return out;
+  }
+  function feedAudio(values, rate) {
+    if (!audioOn || !audioCtx || !(rate > 0)) return;
+    if (rate < 8000) {
+      reconstruction.frequency.setTargetAtTime(Math.min(audioCtx.sampleRate * .45, rate * .48), audioCtx.currentTime, .02);
+      baselineFilter.frequency.setTargetAtTime(.001, audioCtx.currentTime, .02);
+      lowRateNode.port.postMessage({
+        rate,
+        samples: values
+      });
+    } else {
+      reconstruction.frequency.setTargetAtTime(audioCtx.sampleRate * .45, audioCtx.currentTime, .02);
+      baselineFilter.frequency.setTargetAtTime(.1, audioCtx.currentTime, .02);
+      const processed = aggregateSamples(values, rate),
+        buffer = audioCtx.createBuffer(1, processed.length, rate);
+      buffer.copyToChannel(processed, 0);
+      const now = audioCtx.currentTime,
+        latency = buffers[+bufferControl.value],
+        target = now + latency;
+      if (nextStart < now + .01) {
+        if (nextStart) nativeUnderruns++;
+        nextStart = target;
+      }
+      const source = audioCtx.createBufferSource();
+      scheduled.add(source);
+      source.onended = () => {
+        scheduled.delete(source);
+        source.disconnect();
+      };
+      source.buffer = buffer;
+      source.connect(reconstruction);
+      source.start(nextStart);
+      nextStart += buffer.duration;
+      audioBuffer.textContent = Math.max(0, nextStart - now).toFixed(2) + ' s';
+      underruns.textContent = nativeUnderruns;
+    }
+  }
+  audio.onclick = async () => {
+    if (audio.disabled) return;
+    audio.disabled = true;
+    try {
+      if (!audioCtx) await createAudio();
+      if (disposed) return;
+      await audioCtx.resume();
+      if (disposed) return;
+      audioOn = !audioOn;
+      resetAggregation();
+      stopScheduled();
+      lowRateNode.port.postMessage({
+        type: 'reset'
+      });
+      if (audioOn) {
+        nextStart = audioCtx.currentTime + buffers[+bufferControl.value];
+        lowRateNode.port.postMessage({
+          type: 'config',
+          aggregationMs: aggregates[+aggregate.value],
+          bufferSeconds: buffers[+bufferControl.value]
+        });
+      }
+      gainNode.gain.setTargetAtTime(audioOn ? gainAmount() : 0, audioCtx.currentTime, .025);
+      audio.classList.toggle('active', audioOn);
+      audio.setAttribute('aria-pressed', String(audioOn));
+      audio.textContent = audioOn ? 'stop audio' : 'start audio';
+      audioError.textContent = '';
+    } catch {
+      closeAudio();
+      audio.textContent = 'retry audio';
+      audioError.textContent = 'Audio could not start. Check browser audio permissions and try again.';
+    } finally {
+      if (!disposed) audio.disabled = false;
+    }
+  };
+  function frame() {
+    const w = canvas.clientWidth,
+      h = canvas.clientHeight;
+    ctx.fillStyle = '#050608';
+    ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = '#26313a';
+    for (let i = 0; i <= 4; i++) {
+      const y = h * i / 4;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(w, y);
+      ctx.stroke();
+    }
+    return {
+      w,
+      h,
+      top: 0,
+      bottom: h,
+      height: h
+    };
+  }
+  function labels(f, left, right, bottom) {
+    ctx.fillStyle = '#71818d';
+    ctx.font = '11px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(left, 10, 14);
+    ctx.textAlign = 'right';
+    ctx.fillText(right, f.w - 10, 14);
+    ctx.textAlign = 'left';
+    ctx.fillText(bottom, 10, f.h - 8);
+  }
+  function amplitudeAxis(f, description) {
+    ctx.fillStyle = '#71818d';
+    ctx.font = '11px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('+1', 10, 14);
+    ctx.fillText('0', 10, f.h / 2 - 4);
+    ctx.fillText('−1', 10, f.h - 8);
+    ctx.textAlign = 'right';
+    ctx.fillText(description, f.w - 10, 14);
+  }
+  function waveformTime(f, text) {
+    ctx.fillStyle = '#71818d';
+    ctx.font = '11px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(text, f.w / 2, f.h - 8);
+  }
+  function drawPlaybackWaveform() {
+    const w = canvas.clientWidth,
+      h = canvas.clientHeight,
+      a = new Float32Array(waveformAnalyser.fftSize);
+    waveformAnalyser.getFloatTimeDomainData(a);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = 'rgba(255,255,255,.12)';
+    ctx.beginPath();
+    ctx.moveTo(0, h / 2);
+    ctx.lineTo(w, h / 2);
+    ctx.stroke();
+    ctx.strokeStyle = '#8df';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    waveHover = [];
+    for (let i = 0; i < a.length; i++) {
+      const x = i / (a.length - 1) * w,
+        y = h / 2 + a[i] * h * .45;
+      if (i) ctx.lineTo(x, y);else ctx.moveTo(x, y);
+      if (i % Math.max(1, Math.floor(a.length / w)) === 0) waveHover.push({
+        x,
+        y,
+        t: ring.latestTime - (a.length - 1 - i) * 1e6 / audioCtx.sampleRate,
+        v: a[i]
+      });
+    }
+    ctx.stroke();
+    const seconds = a.length / audioCtx.sampleRate,
+      visualGain = gainAmount(),
+      description = isPcm ? `PCM output ±1 · gain ${formatGain(visualGain)}` : `Web Audio output ±1 · ≈ ${formatPsd((scalarFullScale || 1) / visualGain)} ${unit || ''} input`;
+    amplitudeAxis({
+      w,
+      h
+    }, description);
+    waveformTime({
+      w,
+      h
+    }, `${seconds.toFixed(3)} s · ${a.length} AudioContext samples`);
+    shown.textContent = a.length + ' · ' + seconds.toFixed(3) + ' s';
+  }
+  function drawSeries(seconds) {
+    const f = frame(),
+      start = ring.latestTime - seconds * 1e6,
+      bins = Math.max(1, Math.floor(f.w)),
+      binUs = seconds * 1e6 / bins,
+      firstBin = Math.floor(start / binUs),
+      count = bins + 2,
+      mins = new Float32Array(count),
+      maxs = new Float32Array(count),
+      minTimes = new Float64Array(count),
+      maxTimes = new Float64Array(count),
+      aggregationMs = aggregates[+aggregate.value],
+      aggregationSamples = Math.max(1, Math.round(sourceRate * aggregationMs / 1000)),
+      window = [],
+      visitSeconds = seconds + aggregationMs / 1000;
+    mins.fill(Infinity);
+    maxs.fill(-Infinity);
+    let rolling = 0,
+      sampleTotal = 0,
+      sum = 0;
+    ring.visit(visitSeconds, (raw, t) => {
+      window.push(raw);
+      rolling += raw;
+      if (window.length > aggregationSamples) rolling -= window.shift();
+      if (t < start) return;
+      const v = rolling / window.length,
+        b = Math.floor(t / binUs) - firstBin;
+      if (b < 0 || b >= count) return;
+      if (v < mins[b]) {
+        mins[b] = v;
+        minTimes[b] = t;
+      }
+      if (v > maxs[b]) {
+        maxs[b] = v;
+        maxTimes[b] = t;
+      }
+      sum += v;
+      sampleTotal++;
+    });
+    if (!sampleTotal) return;
+    const mean = isPcm ? 0 : sum / sampleTotal;
+    let observedPeak = isPcm ? 1 : 0;
+    if (!isPcm) {
+      for (let b = 0; b < count; b++) if (mins[b] !== Infinity) observedPeak = Math.max(observedPeak, Math.abs(mins[b] - mean), Math.abs(maxs[b] - mean));
+      if (observedPeak > 0) {
+        if (!scalarFullScale) setScalarFullScale(observedPeak * 16);else if (observedPeak > scalarFullScale) {
+          setScalarFullScale(observedPeak * 1.25);
+          updateNormalization();
+        }
+      }
+    }
+    const fullScale = isPcm ? 1 : scalarFullScale || 1,
+      visualGain = gainAmount(),
+      gapUs = derivedMatch ? Infinity : sourceRate ? Math.max(3e6 / sourceRate, binUs * 2.5) : Infinity;
+    ctx.strokeStyle = '#8df';
+    ctx.lineWidth = 1.25;
+    ctx.beginPath();
+    let previousTime = null;
+    waveHover = [];
+    for (let b = 0; b < count; b++) {
+      if (mins[b] === Infinity) continue;
+      const useMin = Math.abs(mins[b] - mean) >= Math.abs(maxs[b] - mean),
+        raw = useMin ? mins[b] : maxs[b],
+        v = raw - mean,
+        t = useMin ? minTimes[b] : maxTimes[b],
+        x = (t - start) / (seconds * 1e6) * f.w,
+        y = f.bottom / 2 + Math.max(-1, Math.min(1, v / fullScale * visualGain)) * f.height * .45;
+      if (previousTime === null || t - previousTime > gapUs) ctx.moveTo(x, y);else ctx.lineTo(x, y);
+      previousTime = t;
+      waveHover.push({
+        x,
+        y,
+        t,
+        v: raw
+      });
+    }
+    ctx.stroke();
+    if (waveHover.length <= 64) {
+      ctx.fillStyle = '#8df';
+      for (const p of waveHover) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    amplitudeAxis(f, isPcm ? `PCM output ±1 · gain ${formatGain(visualGain)}` : `preview output ±1 · ≈ ${formatPsd(fullScale / visualGain)} ${unit || ''} input`);
+    waveformTime(f, `${seconds.toFixed(3)} s · ${sampleTotal} samples`);
+    shown.textContent = sampleTotal + ' · ' + seconds + ' s';
+  }
+  function aggregatedValues(values, rate) {
+    const ms = aggregates[+aggregate.value],
+      n = Math.max(1, Math.round(rate * ms / 1000));
+    if (n === 1) return values;
+    const out = new Float64Array(values.length);
+    let sum = 0;
+    for (let i = 0; i < values.length; i++) {
+      sum += values[i];
+      if (i >= n) sum -= values[i - n];
+      out[i] = sum / Math.min(n, i + 1);
+    }
+    return out;
+  }
+  function fftData(endTime = ring.latestTime) {
+    const selected = 2 ** Number(fftPower.value),
+      limit = welchSegments[+welchControl.value];
+    if (ring.sampleCount < 32) return null;
+    let n = 32;
+    while (n * 2 <= selected && n * 2 <= ring.sampleCount) n *= 2;
+    const hop = n / 2,
+      wanted = n + (limit - 1) * hop,
+      raw = endTime === ring.latestTime ? ring.lastValues(wanted) : ring.lastValuesBefore(wanted, endTime),
+      rate = spectralRate || sourceRate;
+    if (raw.length < n) return null;
+    const values = aggregatedValues(raw, rate),
+      psd = SpectralAnalysis.welchPsd(values, rate, n, limit);
+    if (!psd) return null;
+    initializeScalarFullScale();
+    const amplitudeReference = isPcm ? 1 : scalarFullScale || 1,
+      referencePsd = psd.fullScaleSinePsd * amplitudeReference * amplitudeReference,
+      rawPoints = bandAverage.checked ? SpectralAnalysis.logBandAverage(psd) : SpectralAnalysis.spectrumPoints(psd),
+      points = spectralMode === 'filtered' ? SpectralAnalysis.filterBackground(rawPoints) : rawPoints,
+      slope = SpectralAnalysis.estimateSpectralSlope(psd);
+    return {
+      ...psd,
+      points,
+      rawPoints,
+      slope,
+      rate,
+      n,
+      selected,
+      amplitudeReference,
+      referencePsd
+    };
+  }
+  function frequencyPositionHz(frequency, points) {
+    const a = points[0].frequency,
+      b = points[points.length - 1].frequency,
+      x = (frequency - a) / (b - a);
+    return frequencyMode === 'expanded' ? Math.sqrt(Math.max(0, x)) : frequencyMode === 'log' ? Math.log(frequency / a) / Math.log(b / a) : x;
+  }
+  function frequencyAtPosition(x, points) {
+    const a = points[0].frequency,
+      b = points[points.length - 1].frequency;
+    return frequencyMode === 'expanded' ? a + x * x * (b - a) : frequencyMode === 'log' ? a * Math.pow(b / a, x) : a + x * (b - a);
+  }
+  function valueAtFrequency(frequency, points) {
+    let hi = 1;
+    while (hi < points.length && points[hi].frequency < frequency) hi++;
+    if (hi >= points.length) return points[points.length - 1].power;
+    const lo = Math.max(0, hi - 1),
+      span = points[hi].frequency - points[lo].frequency,
+      t = span ? (frequency - points[lo].frequency) / span : 0;
+    return smooth.checked ? points[lo].power * (1 - t) + points[hi].power * t : t < .5 ? points[lo].power : points[hi].power;
+  }
+  function centroidOf(s) {
+    let weighted = 0,
+      total = 0;
+    for (const point of s.rawPoints) {
+      weighted += point.frequency * point.power;
+      total += point.power;
+    }
+    return total ? weighted / total : s.resolution;
+  }
+  function formatPsd(value) {
+    return value >= .01 && value < 1000 ? value.toFixed(3) : value.toExponential(2);
+  }
+  function rawDb(value, s) {
+    return 10 * Math.log10(Math.max(value, Number.MIN_VALUE) / s.referencePsd);
+  }
+  function displayLevel(value, s) {
+    if (spectralMode === 'filtered') return Math.max(0, Math.min(1, (Math.log2(Math.max(value, Number.MIN_VALUE)) + 1) / 4));
+    return Math.max(0, Math.min(1, (rawDb(value, s) + 100) / 100));
+  }
+  function spectrogramLevel(value, s) {
+    return displayLevel(value, s);
+  }
+  function spectrumAxis(f, s) {
+    const ticks = spectralMode === 'filtered' ? ['8×', '4×', '2×', '1×', '0.5×'] : ['0', '−25', '−50', '−75', '−100'];
+    ctx.fillStyle = '#71818d';
+    ctx.font = '11px monospace';
+    ctx.textAlign = 'left';
+    ticks.forEach((tick, index) => ctx.fillText(tick, 10, index ? f.h * index / 4 - 4 : 14));
+    ctx.textAlign = 'right';
+    const reference = isPcm ? 'dBFS · full-scale sine' : `dBFS-equivalent · 0 dB = ${formatPsd(s.amplitudeReference)} ${unit || 'units'} peak`;
+    ctx.fillText(spectralMode === 'filtered' ? 'power relative to local background' : reference, f.w - 10, 14);
+  }
+  function drawSpectrum(s) {
+    const f = frame();
+    if (!s || !s.points.length) return;
+    const c = centroidOf(s);
+    ctx.strokeStyle = '#fc8';
+    ctx.beginPath();
+    s.points.forEach((point, i) => {
+      const x = frequencyPositionHz(point.frequency, s.points) * f.w,
+        y = f.bottom - displayLevel(point.power, s) * f.height;
+      if (i) ctx.lineTo(x, y);else ctx.moveTo(x, y);
+    });
+    ctx.stroke();
+    if (centroidEnabled.checked) {
+      const x = frequencyPositionHz(c, s.points) * f.w;
+      ctx.strokeStyle = '#ffd84a';
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, f.h);
+      ctx.stroke();
+    }
+    centroidValue.textContent = centroidEnabled.checked ? c.toFixed(2) + ' Hz' : '—';
+    spectrumAxis(f, s);
+    waveformTime(f, `${s.resolution.toFixed(3)} Hz/bin · FFT ${s.n} · Welch ${s.segmentCount} · ${(s.rate / 2).toFixed(2)} Hz Nyquist`);
+  }
+  function appendSpectrogramColumn(s) {
+    const d = devicePixelRatio || 1,
+      col = Math.max(1, Math.round(d)),
+      H = spectro.height,
+      W = spectro.width;
+    sctx.drawImage(spectro, col, 0, W - col, H, 0, 0, W - col, H);
+    sctx.fillStyle = '#050608';
+    sctx.fillRect(W - col, 0, col, H);
+    for (let y = 0; y < H; y++) {
+      const frequency = frequencyAtPosition(1 - y / Math.max(1, H - 1), s.points),
+        value = valueAtFrequency(frequency, s.points),
+        v = spectrogramLevel(value, s) * 255;
+      sctx.fillStyle = `hsl(${240 - v * .8} 90% ${v * .28}%)`;
+      sctx.fillRect(W - col, y, col, 1);
+    }
+    if (centroidEnabled.checked) {
+      const y = (1 - frequencyPositionHz(centroidOf(s), s.points)) * H;
+      sctx.fillStyle = '#ffd84a';
+      sctx.beginPath();
+      sctx.arc(W - col - 1, y, Math.max(2, d * 1.5), 0, Math.PI * 2);
+      sctx.fill();
+    }
+  }
+  function updateSpectrogram(s) {
+    if (!s || !s.points.length) return;
+    const intervalUs = 1e6 / 30,
+      latest = ring.latestTime;
+    if (!lastSpectro || latest < lastSpectro) {
+      lastSpectro = latest;
+      appendSpectrogramColumn(s);
+      return;
+    }
+    let columns = Math.floor((latest - lastSpectro) / intervalUs);
+    if (!columns) return;
+    if (columns > 60) {
+      lastSpectro = latest - 60 * intervalUs;
+      columns = 60;
+    }
+    for (let i = 0; i < columns; i++) {
+      lastSpectro += intervalUs;
+      const historical = i === columns - 1 ? s : fftData(lastSpectro);
+      if (historical) appendSpectrogramColumn(historical);
+    }
+  }
+  function drawSpectrogram(s) {
+    updateSpectrogram(s);
+    const f = frame();
+    ctx.drawImage(spectro, 0, 0, spectro.width, spectro.height, 0, 0, f.w, f.h);
+    if (s && s.points.length) {
+      const c = centroidOf(s);
+      centroidValue.textContent = centroidEnabled.checked ? c.toFixed(2) + ' Hz' : '—';
+      const rawLegend = isPcm ? 'color −100…0 dBFS' : 'color −100…0 dBFS-equivalent';
+      labels(f, `${(s.rate / 2).toFixed(2)} Hz`, spectralMode === 'filtered' ? 'color 0.5× · 1× · 2× · 4× · 8×+' : rawLegend, `frequency ↑ · time → · ${frequencyMode} · ${spectralMode}`);
+    }
+  }
+  const MODULATION_PALETTES = {
+    viridis: [[0, [68, 1, 84]], [.25, [59, 82, 139]], [.5, [33, 145, 140]], [.75, [92, 200, 99]], [1, [253, 231, 37]]],
+    plasma: [[0, [13, 8, 135]], [.25, [126, 3, 168]], [.5, [203, 70, 121]], [.75, [248, 148, 65]], [1, [240, 249, 33]]],
+    inferno: [[0, [0, 0, 4]], [.25, [85, 15, 109]], [.5, [186, 54, 85]], [.75, [249, 140, 10]], [1, [252, 255, 164]]],
+    magma: [[0, [0, 0, 4]], [.25, [79, 18, 123]], [.5, [181, 54, 122]], [.75, [251, 135, 97]], [1, [252, 253, 191]]],
+    cividis: [[0, [0, 32, 77]], [.25, [50, 72, 105]], [.5, [101, 111, 110]], [.75, [158, 154, 99]], [1, [255, 233, 69]]]
+  };
+  function modulationRgb(value) {
+    const stops = MODULATION_PALETTES[modulationPalette.value] || MODULATION_PALETTES.viridis;
+    for (let i = 1; i < stops.length; i++) {
+      if (value <= stops[i][0]) {
+        const a = stops[i - 1],
+          b = stops[i],
+          t = (value - a[0]) / (b[0] - a[0]);
+        return a[1].map((v, j) => Math.round(v + (b[1][j] - v) * t));
+      }
+    }
+    return stops[stops.length - 1][1];
+  }
+  function modulationFrequencyAtPosition(position, meta) {
+    return frequencyMode === 'expanded' ? meta.minFrequency + (meta.maxFrequency - meta.minFrequency) * position * position : frequencyMode === 'linear' ? meta.minFrequency + (meta.maxFrequency - meta.minFrequency) * position : meta.minFrequency * (meta.maxFrequency / meta.minFrequency) ** position;
+  }
+  function drawModulation(s) {
+    const f = frame();
+    if (!s || !s.points.length) return;
+    if (missingCount !== modulationMissingCount) {
+      modulation.reset();
+      modulationMissingCount = missingCount;
+    }
+    const frameRate = Math.min(25, Math.max(2, (spectralRate || sourceRate) / 4)),
+      intervalUs = 1e6 / frameRate,
+      latest = ring.latestTime;
+    if (!modulation.lastTimestampUs || latest < modulation.lastTimestampUs) modulation.ingest(s, latest, frameRate, spectralMode);else {
+      let frames = Math.floor((latest - modulation.lastTimestampUs) / intervalUs);
+      if (frames > 60) {
+        modulation.lastTimestampUs = latest - 60 * intervalUs;
+        frames = 60;
+      }
+      for (let i = 0; i < frames; i++) {
+        const timestamp = modulation.lastTimestampUs + intervalUs,
+          historical = i === frames - 1 ? s : fftData(timestamp);
+        if (historical) modulation.ingest(historical, timestamp, frameRate, spectralMode);
+      }
+    }
+    const meta = modulation.metadata();
+    lastModulation = meta;
+    if (!(meta.maxFrequency > meta.minFrequency)) return;
+    const W = modulation.modulationBins + 1,
+      H = Math.max(modulation.frequencyBins, Math.min(512, Math.round(f.h * (devicePixelRatio || 1))));
+    if (modulationField.width !== W || modulationField.height !== H) {
+      modulationField.width = W;
+      modulationField.height = H;
+    }
+    const image = modulationFieldContext.createImageData(W, H);
+    for (let y = 0; y < H; y++) {
+      const position = 1 - y / Math.max(1, H - 1),
+        frequency = modulationFrequencyAtPosition(position, meta),
+        binPosition = Math.max(0, Math.min(modulation.frequencyBins - 1, Math.log(frequency / meta.minFrequency) / Math.log(meta.maxFrequency / meta.minFrequency) * modulation.frequencyBins)),
+        lowBin = Math.floor(binPosition),
+        highBin = Math.min(modulation.frequencyBins - 1, lowBin + 1),
+        mix = smooth.checked ? binPosition - lowBin : 0;
+      for (let x = 0; x < W; x++) {
+        const value = modulation.display[lowBin][x] * (1 - mix) + modulation.display[highBin][x] * mix,
+          rgb = modulationRgb(value),
+          i = (y * W + x) * 4;
+        image.data[i] = rgb[0];
+        image.data[i + 1] = rgb[1];
+        image.data[i + 2] = rgb[2];
+        image.data[i + 3] = 255;
+      }
+    }
+    modulationFieldContext.putImageData(image, 0, 0);
+    ctx.imageSmoothingEnabled = smooth.checked;
+    if (smooth.checked) ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(modulationField, 0, 0, W, H, 0, 0, f.w, f.h);
+    ctx.fillStyle = 'rgba(255,255,255,.22)';
+    ctx.fillRect(f.w / W, 0, 1, f.h);
+    ctx.fillStyle = '#dce6ee';
+    ctx.font = '11px monospace';
+    ctx.textAlign = 'left';
+    for (let i = 0; i < 5; i++) {
+      const position = i / 4,
+        frequency = modulationFrequencyAtPosition(1 - position, meta);
+      ctx.fillText(`${frequency.toFixed(frequency < 10 ? 2 : 0)} Hz`, 8, position ? Math.min(f.h - 8, f.h * position) : 14);
+    }
+    ctx.textAlign = 'right';
+    ctx.fillText(`steady/current │ modulation ${meta.minModulation.toFixed(2)}–${meta.maxModulation.toFixed(2)} Hz`, f.w - 10, 14);
+    ctx.textAlign = 'left';
+    ctx.fillText(`frequency ↑ · modulation frequency → · ${frequencyMode} · ${spectralMode}`, 10, f.h - 8);
+    shown.textContent = `${modulation.frequencyBins}×${modulation.modulationBins + 1} · ${meta.historySeconds.toFixed(1)} s history`;
+    psdStats.textContent = `FFT ${s.n}/${s.selected} · Welch ${s.segmentCount} · Δmod ${meta.modulationResolution.toFixed(3)} Hz · ${frameRate.toFixed(1)} spectra/s`;
+  }
+  function render(now) {
+    if (disposed) return;
+    animationFrame = requestAnimationFrame(render);
+    if (now - lastDraw < 1000 / 30) return;
+    lastDraw = now;
+    resize();
+    if (view === 'wave') {
+      centroidValue.textContent = '—';
+      lastSpectrum = null;
+      lastModulation = null;
+      spectralColor.textContent = '—';
+      psdStats.textContent = '—';
+      if (audioOn && waveformAnalyser && windowSeconds * audioCtx.sampleRate <= 32768) drawPlaybackWaveform();else drawSeries(windowSeconds);
+    } else {
+      const s = fftData();
+      lastSpectrum = s;
+      if (s) {
+        spectralColor.textContent = Number.isFinite(s.slope.alpha) ? `${s.slope.color} · α ${s.slope.alpha.toFixed(2)} · R² ${s.slope.r2.toFixed(2)}` : 'insufficient data';
+        psdStats.textContent = `${s.segmentCount} segments · ${bandAverage.checked ? 'banded' : 'FFT bins'} · ${spectralMode}`;
+      }
+      if (view === 'spectrum') drawSpectrum(s);else if (view === 'spectrogram') drawSpectrogram(s);else drawModulation(s);
+    }
+    sourceStats.textContent = sourceRate ? `${sourceRate.toFixed(1)} Hz · Nyquist ${((spectralRate || sourceRate) / 2).toFixed(1)} Hz` : '—';
+    missing.textContent = missingCount;
+    arrival.textContent = `${lastArrival ? (performance.now() - lastArrival).toFixed(0) : 0}/${maxArrival.toFixed(0)} ms`;
+  }
+  animationFrame = requestAnimationFrame(render);
+  function stopScheduled() {
+    for (const source of scheduled) {
+      try {
+        source.stop();
+        source.disconnect();
+      } catch {/* Already ended. */}
+    }
+    scheduled.clear();
+    nextStart = 0;
+  }
+  function closeAudio() {
+    audioOn = false;
+    stopScheduled();
+    if (lowRateNode) {
+      lowRateNode.port.onmessage = null;
+      lowRateNode.port.close();
+      lowRateNode.disconnect();
+    }
+    if (meterNode) {
+      meterNode.port.onmessage = null;
+      meterNode.port.close();
+      meterNode.disconnect();
+    }
+    if (audioCtx) {
+      const context = audioCtx;
+      audioCtx = null;
+      void context.close().catch(() => {});
+    }
+    lowRateNode = meterNode = reconstruction = baselineFilter = normalizationNode = gainNode = waveformAnalyser = null;
+  }
+  function resetSignal() {
+    ring.chunks = [];
+    ring.sampleCount = 0;
+    ring.latestTime = 0;
+    sourceRate = spectralRate = 0;
+    lastSampleTime = lastSequence = null;
+    pcmSampleSequence = 0;
+    missingCount = 0;
+    lastArrival = maxArrival = lastSpectro = 0;
+    waveHover = [];
+    lastSpectrum = lastModulation = null;
+    modulation.reset();
+    sctx.clearRect(0, 0, spectro.width, spectro.height);
+    resetAggregation();
+    stopScheduled();
+    if (lowRateNode) lowRateNode.port.postMessage({
+      type: 'reset'
+    });
+    shown.textContent = '0';
+    cursorValue.textContent = centroidValue.textContent = spectralColor.textContent = psdStats.textContent = '—';
+  }
+  const unsubscribe = connectVisualizer(router, device, {
+    samples: ingestScalar,
+    pcm: ingestPcm,
+    reset: resetSignal,
+    status: status => {
+      connection.textContent = status;
+      connection.className = status === 'connected' ? '' : 'warning';
+    }
+  });
+  return () => {
+    disposed = true;
+    unsubscribe();
+    cancelAnimationFrame(animationFrame);
+    observer.disconnect();
+    events.abort();
+    closeAudio();
+    for (const element of root.querySelectorAll('button,input,select')) element.onclick = element.oninput = element.onchange = null;
+  };
+}

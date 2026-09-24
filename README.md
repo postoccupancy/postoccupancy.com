@@ -59,7 +59,7 @@ Keep route components server-rendered where practical; place browser APIs, audio
 
 Viewport mode removes the article header, breadcrumbs, width limit, and padding. The main area fills the available height; collapsing navigation releases its full width. A small navigation button remains at the top left, so application controls should leave that corner available. This fills the browser viewport, without invoking the browser Fullscreen API.
 
-DSP for Artists contains a local MDX + React example. The two node pages display live router data, and Electric Sea contains the router interface; other pages remain placeholders. Supabase and the existing audio/visual applications are not yet integrated.
+DSP for Artists contains a local MDX + React example. The two node pages display live router data. Electric Sea contains the router interface, and Spectral Visualizer provides a selectable signal dashboard; other pages remain placeholders. Supabase and the existing audio/visual applications are not yet integrated.
 
 ## Live node dashboards
 
@@ -86,9 +86,28 @@ Choose **Enable MIDI** to request browser MIDI access. **Send to port** routes s
 
 Assignments and port settings retain the original `rf-assign-`, `rf-out-`, and `rf-port-state` localStorage keys. Storage is per origin, so settings on the Pi site do not automatically transfer here. Scalar Out is local to this browser. Audio Out sends `pcm_source_enable` to the Pi and displays the server's acknowledged state; it affects the shared audio source, but does not subscribe to or play PCM in this page.
 
-OSC availability comes from the router handshake. UDP back to the browser's machine is unavailable through Cloudflare; direct LAN/VPN connections are required for that. The WebSocket URL override also supplies the origin for links to existing Pi applications. View links and Modulation spectrum open those applications on the Pi until their site integrations are implemented. Resident Frequency remains a placeholder, with the existing `/voices/` application linked in setup help.
+OSC availability comes from the router handshake. UDP back to the browser's machine is unavailable through Cloudflare; direct LAN/VPN connections are required for that. The WebSocket URL override also supplies the origin for links to existing Pi applications. View links open the local Spectral Visualizer with the signal’s `device` parameter. Modulation spectrum still opens the separate application on the Pi. Resident Frequency remains a placeholder, with the existing `/voices/` application linked in setup help.
 
 Tests cover metadata replay after client navigation, reconnects, audio acknowledgments, mapping persistence, MIDI CC output/input, port direction exclusion and cleanup, and mobile overflow. MIDI tests use simulated ports and never send to physical hardware.
+
+## Spectral Visualizer
+
+Open `/interfaces/spectral-visualizer`, or link directly with `?device=osc/electric-sky/rms`. The selector discovers scalar, MIDI, and PCM devices through the existing root connection; it retains an explicit device parameter even before that signal arrives. Changing the selector updates browser history, and Back/Forward restores the selection. Electric Sea’s View links now open this page without starting another WebSocket.
+
+- `src/components/visualizer/spectral-visualizer.tsx`: MUI page controls, discovered-device selector, and query parameter handling under a Suspense boundary.
+- `src/components/visualizer/visualizer-surface.tsx` and `visualizer.module.css`: the original inspector controls, scoped to a single mounted surface. Its dark charts sit within the documentation shell and expand when the sidebar collapses.
+- `src/lib/visualizer/engine.js`: rendering, buffering, PCM/IMA ADPCM decoding, and Web Audio adapted from `signal-router/visualizer/index.html`. It remains JavaScript to preserve the existing implementation rather than rewrite its algorithms; React owns the surrounding page. This includes waveform, spectrum, spectrogram, modulation, aggregate/window/FFT/Welch controls, frequency scaling, bands, raw/filtered spectra, centroid, palettes, cursor readouts, and audio diagnostics.
+- `src/lib/visualizer/{spectral-analysis,modulation-analysis}.js`: the existing numerical routines, converted from script globals to ES modules.
+- `src/lib/visualizer/connection.ts`: filtering the selected signal and managing page-local PCM/analysis subscriptions through the shared client.
+- `src/lib/signals/signal-device.ts`: signal IDs and scalar/MIDI value extraction. `RouterClient.devices` retains bounded discovery metadata rather than replaying signal events.
+
+Selecting PCM or the derived bass/mid/high/centroid channels enables the corresponding audio source on the Pi, matching the original visualizer. The page only subscribes to the selected stream and resubscribes after reconnects. **Start audio** is required for local playback. Leaving the page or switching signals cancels its subscription, animation, listeners, scheduled playback, and AudioContext; it does not disable a shared source that another application may use.
+
+The router’s ESAU binary frames have no device ID. `RouterClient` tracks ordered PCM subscription acknowledgments so packets from a previous selection are discarded until the current selection is acknowledged. Keep only one selected PCM stream on this shared connection unless the server protocol is extended to identify frames. Analysis subscriptions do not carry binary audio.
+
+Visualizer history retains up to 120 seconds, capped at two million samples and 12,000 chunks. Sequence/time resets clear history after a node reboot; reconnects also reset display buffers. Scalar full-scale calibration uses the original `rf.scalarFullScale.<device>` localStorage keys. The audio worklet queue is bounded as well. Signal-specific playback and controls reset when changing devices.
+
+`tests/visualizer.spec.ts` covers selection/history, all four views, plotted spectrum pixels, PCM and ADPCM ingestion, subscription switching/reconnects, malformed data, MIDI discovery, device reboot handling, known-tone FFT/power accuracy, and audio startup/cleanup with a simulated AudioContext.
 
 ## Editing the site
 

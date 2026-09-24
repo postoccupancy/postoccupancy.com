@@ -1,7 +1,9 @@
 import { SampleRing } from './sample-ring';
+import { signalDevice, signalValue } from './signal-device';
 
 export type RouterMessage = { type: string; [key: string]: unknown } | ArrayBuffer;
 export type RouterInfo = Exclude<RouterMessage, ArrayBuffer>;
+export interface SignalDevice { id: string; kind: 'scalar' | 'midi' | 'audio'; unit: string }
 export interface Channel {
   id: string;
   node: string;
@@ -23,6 +25,13 @@ const isRecord = (value: unknown): value is Record<string, unknown> => typeof va
 export class RouterClient {
   channels = new Map<string, Channel>();
   clocks = new Map<string, NodeClock>();
+  // Metadata only, retained across page changes/reconnects for signal selectors.
+  devices = new Map<string, SignalDevice>();
+  // ESAU binary frames carry no device ID. Only expose the latest acknowledged
+  // selection, including when users switch A → B → A before replies arrive.
+  pcmDevice: string | null = null;
+  private pcmRevision = 0;
+  private pcmRequests: { device: string; enabled: boolean; revision: number }[] = [];
   status: 'connecting' | 'connected' | 'reconnecting' = 'connecting';
   now = 0;
   private socket: WebSocket | null = null;
@@ -44,6 +53,11 @@ export class RouterClient {
   };
   send = (message: { type: string; [key: string]: unknown }) => {
     if (this.socket?.readyState !== WebSocket.OPEN) return false;
+    if (message.type === 'pcm_subscribe' && typeof message.device === 'string') {
+      if (this.pcmRequests.length >= 256) return false;
+      this.pcmDevice = null;
+      this.pcmRequests.push({ device: message.device, enabled: message.enabled !== false, revision: ++this.pcmRevision });
+    }
     this.socket.send(JSON.stringify(message));
     return true;
   };
@@ -72,6 +86,8 @@ export class RouterClient {
         attempt = 0;
         this.status = 'connected';
         this.info.clear();
+        this.pcmDevice = null;
+        this.pcmRequests = [];
         this.clocks.clear();
         this.channels.forEach((channel) => { channel.ring.clear(); channel.receivedAt = 0; });
         this.notify();
@@ -100,6 +116,23 @@ export class RouterClient {
   }
 
   private ingest(message: Record<string, unknown>) {
+    if (message.type === 'pcm_stream') {
+      const pending = this.pcmRequests[0];
+      if (pending?.device === message.device) {
+        this.pcmRequests.shift();
+        if (pending.revision === this.pcmRevision && pending.enabled) this.pcmDevice = pending.device;
+      }
+    }
+    const discover = (message: RouterInfo) => {
+      const id = signalDevice(message);
+      if (!id || (message.type !== 'audio' && signalValue(message) === null)) return;
+      if (!this.devices.has(id) && this.devices.size >= 512) return;
+      this.devices.set(id, { id, kind: message.type === 'audio' ? 'audio' : message.type === 'midi' ? 'midi' : 'scalar', unit: typeof message.unit === 'string' ? message.unit : '' });
+    };
+    if (['osc', 'json', 'midi', 'audio'].includes(String(message.type))) discover(message as RouterInfo);
+    if (message.type === 'signal_batch' && Array.isArray(message.signals)) {
+      for (const signal of message.signals) if (isRecord(signal)) discover(signal as RouterInfo);
+    }
     if (['server_info', 'client_info', 'client_count', 'source_info', 'audio'].includes(String(message.type))) {
       const key = `${message.type}/${message.ip ?? message.device ?? ''}`;
       if (this.info.has(key) || this.info.size < 256) this.info.set(key, message as RouterInfo);
@@ -111,6 +144,7 @@ export class RouterClient {
       const samples = stream.samples.filter((sample): sample is [number, number, number] =>
         Array.isArray(sample) && sample.length === 3 && sample.every((value) => typeof value === 'number' && Number.isFinite(value)));
       if (!samples.length) continue;
+      discover({ type: 'osc', device: typeof stream.device === 'string' ? stream.device : `osc/${stream.name}/${stream.param}`, unit: stream.unit, value: samples[samples.length - 1][2] });
       const latestTime = samples[samples.length - 1][1];
       const sendTime = typeof message.sendTimeUs === 'number' && Number.isFinite(message.sendTimeUs) ? message.sendTimeUs : latestTime;
       let clock = this.clocks.get(stream.name);

@@ -134,7 +134,7 @@ Completed in commit `ae503f1` (`feat: integrate signal router interface into Ele
 - Leaving Electric Sea removes its subscriptions/timers, releases notes it sent, and closes MIDI ports. The root connection stays alive. MIDI routing is currently active only while Electric Sea is mounted; future Resident Frequency work must coordinate MIDI ownership if requirements change.
 - Scalar Out is local browser output state. **Audio Out** sends `pcm_source_enable` to the Pi, affects the shared source, and waits for acknowledged server state. It does not subscribe to or play PCM in this page.
 - OSC availability comes from the router handshake. UDP input uses port 5005, and output to directly reachable clients uses 9000. Cloudflare WebSocket access does not make browser-side UDP possible; LAN/VPN access is needed for that behavior.
-- Known node headings link to the site's node pages. View links and Modulation spectrum still open the existing Pi applications. Local recorder links to `http://127.0.0.1:3010/`. The WebSocket override supplies the origin for Pi application links.
+- Known node headings link to the site's node pages. View links now open the site's Spectral Visualizer with a device parameter; Modulation spectrum still opens the separate Pi application. Local recorder links to `http://127.0.0.1:3010/`. The WebSocket override supplies the origin for Pi application links.
 - Resident Frequency is still a placeholder; setup help retains a link to the working Pi `/voices/` application.
 
 ## Verification and remaining scope
@@ -150,9 +150,25 @@ At completion of Electric Sea, lint, type checking, production build, and all 12
 Future work already discussed, not yet implemented:
 
 - Resident Frequency should eventually run the existing Pi `/voices` live MIDI extraction interface through the shared connection.
-- Spectral Visualizer should visualize selectable live signals; Microphone Visualizer should incorporate the existing p5/Web Audio sketch.
+- Microphone Visualizer should incorporate the existing p5/Web Audio sketch. Spectral Visualizer is now implemented; see below.
 - Node pages can grow explanatory documentation alongside their live dashboards.
 - Processing/SuperCollider and other Weather Music pages will hold artwork documentation, source, recordings, and related material.
 - Lab will hold sequential interactive DSP tutorials; Notes will hold longer-form writing.
 - AI Weather Station, Apartment Observatory, and the remaining named routes are foundations/placeholders pending content or application integration.
 - Supabase history and any necessary HTTP proxy are later phases, not implicit additions to the current work.
+
+
+## Spectral Visualizer integration
+
+- `/interfaces/spectral-visualizer?device=...` reproduces the existing `signal-router/visualizer` inspector with a selector for discovered scalar, MIDI, and PCM signals. Explicit unknown device parameters remain selected while awaiting data. The default is a discovered scalar, never automatic microphone activation. Browser Back/Forward follows selector changes.
+- Electric Sea’s View links now navigate here within the site, preserving the shared WebSocket.
+- `src/components/visualizer/spectral-visualizer.tsx` owns selection/URL state inside Suspense; `visualizer-surface.tsx` isolates the original imperative controls and canvas under React. `visualizer.module.css` scopes the inspector’s dark styling. This is a deliberate local CSS exception to the site’s otherwise mostly MUI `sx` styling.
+- `src/lib/visualizer/engine.js` ports the original rendering, chunk ring, PCM/IMA ADPCM decoding, and Web Audio logic. `spectral-analysis.js` and `modulation-analysis.js` reuse the original algorithms as ES modules. Keep those routines aligned with the source rather than replacing them with approximate charts.
+- All four views are present: waveform, spectrum, spectrogram, modulation. Preserve aggregation, buffer/gain, time window, FFT/Welch, bands, frequency scaling, raw/filtered mode, centroid, smoothing/palette, cursor, and diagnostic controls.
+- `src/lib/visualizer/connection.ts` filters the selected signal and owns PCM/analysis subscriptions. Selecting PCM or derived bass/mid/high/centroid enables the corresponding source on the Pi, matching the original. Local playback requires Start audio. Unmount/selection changes unsubscribe and release audio, scheduled sources, animation, observers, and handlers without disabling the shared source.
+- `RouterClient.devices` provides bounded discovery metadata. `signal-device.ts` maps scalar and MIDI event identities/values. No old MIDI events are replayed for discovery.
+- ESAU binary frames lack a device ID. The shared client tracks ordered subscription acknowledgments to reject data from a previous selection, including rapid switches. Only one PCM selection may consume that connection unless the server protocol gains frame identity; do not independently subscribe multiple binary consumers.
+- History is capped at 120 seconds, two million samples, and 12,000 chunks; source resets/reconnects clear buffers. Worklet queues are bounded. Full-scale calibration retains the original `rf.scalarFullScale.<device>` localStorage convention.
+- `tests/visualizer.spec.ts` adds mocked selection/history, plotting, PCM/ADPCM subscription lifecycle, MIDI discovery, reboot/malformed-data, known-tone FFT accuracy, and simulated audio startup/cleanup checks. Do not activate real microphones or speaker playback merely to run regression tests.
+- During this work the user reported a WebSocket interruption. A subsequent read-only test received 717 sample batches in 12 seconds, and the local visualizer received live Electric Sky data without runtime errors. The earlier interruption’s cause was not established. A temporary approval-service failure interrupted verification separately; do not conflate it with a Pi outage.
+- Completion verification: production build, TypeScript, lint, and all 17 Playwright tests passed. A read-only live scalar check rendered spectrum, spectrogram, and modulation at approximately 251 Hz with no browser errors. PCM switching and audio lifecycle were tested with simulated data/audio, not physical playback.

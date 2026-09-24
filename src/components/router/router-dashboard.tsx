@@ -135,7 +135,7 @@ export function RouterDashboard() {
                 <TableCell>{scalar ? Math.round(normalized(row) * 127) : '—'}</TableCell>
                 {(['channel', 'cc', 'min', 'max'] as const).map((field) => <TableCell key={field}><AssignmentInput row={row} field={field} model={model} /></TableCell>)}
                 <TableCell><Toggle label={`${row.key} output`} enabled={row.signal.type === 'audio' ? !!row.signal.enabled : row.out} disabled={row.signal.type === 'audio' && !connected} onClick={() => model.toggleOut(row)} /></TableCell>
-                <TableCell><Link href={external(`/visualizer/?device=${encodeURIComponent(row.key)}`)} target="_blank" rel="noreferrer" aria-label={`View ${row.key}`}>{row.signal.type === 'audio' ? 'Audio' : 'Open'} ↗</Link></TableCell>
+                <TableCell><Link component={NextLink} href={`/interfaces/spectral-visualizer?device=${encodeURIComponent(row.key)}`} aria-label={`View ${row.key}`}>{row.signal.type === 'audio' ? 'Audio' : 'Open'}</Link></TableCell>
               </TableRow>;
             })}</TableBody>
           </Table>
@@ -150,7 +150,7 @@ export function RouterDashboard() {
       <Typography variant="body2">“Send to port” sends router signals to a local MIDI output; “Receive from port” sends local MIDI input to the router. Only one direction is enabled per named port to prevent feedback.</Typography>
       <Typography variant="body2">CH / CC assignments, ranges, scalar output switches, and port directions are saved in this site’s local storage. Settings from the Pi site are separate. Scalar values are normalized to 0–127 with the original 0.3 smoothing; non-CC MIDI messages pass through.</Typography>
       <Typography variant="body2">OSC uses UDP ports 5005 into the Pi and 9000 back to directly connected clients. Cloudflare carries WebSocket data, but cannot deliver UDP to your computer. Audio Out affects the shared source; it does not start audio playback in this page.</Typography>
-      <Typography variant="body2">View links open the existing Pi visualizer. <Link href={external('/voices/')} target="_blank" rel="noreferrer">The existing voices application ↗</Link> remains available there until it is integrated into Resident Frequency.</Typography>
+      <Typography variant="body2">View links open Spectral Visualizer with the selected signal. <Link href={external('/voices/')} target="_blank" rel="noreferrer">The existing voices application ↗</Link> remains available there until it is integrated into Resident Frequency.</Typography>
     </Box>
   </Box>;
 }

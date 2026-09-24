@@ -43,7 +43,7 @@ test('replays router metadata after navigation, discovers signals, and acknowled
   const channel = page.getByRole('spinbutton', { name: `${signal.device} channel` });
   await channel.fill('3'); await channel.press('Enter');
   await page.getByRole('button', { name: `${signal.device} output` }).click();
-  await expect(page.getByRole('link', { name: `View ${signal.device}` })).toHaveAttribute('href', 'https://rf.postoccupancy.com/visualizer/?device=osc%2Felectric-sky%2Ftemperature');
+  await expect(page.getByRole('link', { name: `View ${signal.device}` })).toHaveAttribute('href', '/interfaces/spectral-visualizer?device=osc%2Felectric-sky%2Ftemperature');
   await page.getByRole('link', { name: 'Indoor Sky', exact: true }).click();
   await page.getByRole('link', { name: 'Electric Sea', exact: true }).click();
   await expect(audio).toHaveAttribute('aria-pressed', 'true');
