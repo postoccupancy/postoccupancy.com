@@ -1,0 +1,29 @@
+import { WaveExplorer } from '@/components/lab/wave-explorer';
+
+Sound can be described as a signal that changes over time. A sine wave is a useful
+place to begin: a smooth, repeating oscillation with just one frequency.
+
+## Frequency and amplitude
+
+**Frequency** is the number of cycles per second, measured in hertz (Hz).
+**Amplitude** describes the size of the oscillation. In this example, the vertical
+axis is normalized from −1 to 1, and the horizontal axis shows one second.
+
+Move the sliders to see how these two properties change the wave.
+
+<WaveExplorer initialFrequency={3} initialAmplitude={0.65} />
+
+## Try it
+
+1. Increase the frequency. More cycles fit into the same one-second window.
+2. Reduce the amplitude. The wave gets shorter without changing its frequency.
+3. Set the amplitude to zero. The oscillation becomes a flat line.
+
+The curve follows this expression, where `t` is time in seconds:
+
+```js
+amplitude * Math.sin(2 * Math.PI * frequency * t)
+```
+
+This is a visual example: the frequencies are deliberately slow enough to count,
+and the explorer does not generate audio.
