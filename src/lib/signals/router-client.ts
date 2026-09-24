@@ -1,6 +1,7 @@
 import { SampleRing } from './sample-ring';
 
 export type RouterMessage = { type: string; [key: string]: unknown } | ArrayBuffer;
+export type RouterInfo = Exclude<RouterMessage, ArrayBuffer>;
 export interface Channel {
   id: string;
   node: string;
@@ -28,14 +29,17 @@ export class RouterClient {
   private listeners = new Set<() => void>();
   private messages = new Set<(message: RouterMessage) => void>();
   private version = 0;
+  private info = new Map<string, RouterInfo>();
 
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   getSnapshot = () => this.version;
   getServerSnapshot = () => 0;
 
-  // Future router / voices features can use this same connection for their own messages.
-  subscribeMessages = (listener: (message: RouterMessage) => void) => {
+  // Replay connection metadata/capabilities to pages mounted after the handshake.
+  // Never replay signal events: that could emit old MIDI notes or controller values.
+  subscribeMessages = (listener: (message: RouterMessage) => void, replayInfo = false) => {
     this.messages.add(listener);
+    if (replayInfo) this.info.forEach(listener);
     return () => { this.messages.delete(listener); };
   };
   send = (message: { type: string; [key: string]: unknown }) => {
@@ -67,6 +71,7 @@ export class RouterClient {
       socket.onopen = () => {
         attempt = 0;
         this.status = 'connected';
+        this.info.clear();
         this.clocks.clear();
         this.channels.forEach((channel) => { channel.ring.clear(); channel.receivedAt = 0; });
         this.notify();
@@ -95,6 +100,10 @@ export class RouterClient {
   }
 
   private ingest(message: Record<string, unknown>) {
+    if (['server_info', 'client_info', 'client_count', 'source_info', 'audio'].includes(String(message.type))) {
+      const key = `${message.type}/${message.ip ?? message.device ?? ''}`;
+      if (this.info.has(key) || this.info.size < 256) this.info.set(key, message as RouterInfo);
+    }
     if (message.type !== 'sample_batch' || !Array.isArray(message.streams)) return;
     const now = performance.now();
     for (const stream of message.streams) {

@@ -33,7 +33,7 @@ test('discovers channels, converts power, and shares one socket across routes', 
   await delay.focus(); await delay.press('Home');
   await expect(delay).toHaveValue('0.5');
   await page.getByRole('link', { name: 'Electric Sea', exact: true }).click();
-  await page.getByRole('link', { name: 'Resident Frequency', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Resident Frequency', exact: true }).click();
   await page.getByRole('link', { name: 'Indoor Sky', exact: true }).click();
   await expect(page.getByRole('region', { name: 'Humidity', exact: true })).toContainText('45.0000 %');
   await expect(page.getByRole('region', { name: 'Temperature', exact: true })).toHaveCount(0);

@@ -59,21 +59,36 @@ Keep route components server-rendered where practical; place browser APIs, audio
 
 Viewport mode removes the article header, breadcrumbs, width limit, and padding. The main area fills the available height; collapsing navigation releases its full width. A small navigation button remains at the top left, so application controls should leave that corner available. This fills the browser viewport, without invoking the browser Fullscreen API.
 
-DSP for Artists contains a local MDX + React example. The two node pages display live router data; other pages remain placeholders. Supabase and the existing audio/visual applications are not yet integrated.
+DSP for Artists contains a local MDX + React example. The two node pages display live router data, and Electric Sea contains the router interface; other pages remain placeholders. Supabase and the existing audio/visual applications are not yet integrated.
 
 ## Live node dashboards
 
 Open `/nodes/electric-sky` or `/nodes/indoor-sky`. A single `RouterProvider` in the root providers opens `wss://rf.postoccupancy.com` and survives navigation between all pages. Set `NEXT_PUBLIC_SIGNAL_ROUTER_URL` in `.env.local` to override that address, then restart/rebuild Next.js. Each browser tab has its own connection.
 
 - `src/components/signals/router-provider.tsx`: root provider and `useSignalRouter()` hook.
-- `src/lib/signals/router-client.ts`: shared connection, reconnect handling, incoming channel discovery, and node clocks. Future router and Resident Frequency components can use `subscribeMessages()` and `send()` on the same client. Binary frames are available to subscribers too; no PCM or voices subscription is enabled automatically. Features that subscribe later must handle reconnection and unsubscribe on unmount.
+- `src/lib/signals/router-client.ts`: shared connection, reconnect handling, incoming channel discovery, and node clocks. Electric Sea uses `subscribeMessages()` and `send()` on the same client; Resident Frequency can use them later. Passing `true` as the second subscription argument replays connection metadata and audio capabilities, without replaying old signal events. Binary frames are available to subscribers too; no PCM or voices subscription is enabled automatically. Features that subscribe later must handle reconnection and unsubscribe on unmount.
 - `src/lib/signals/sample-ring.ts`: bounded sample buffers adapted from the Electric Sky firmware dashboard's `Ring` class.
 - `src/components/signals/scope-plot.tsx`: canvas renderer adapted from `electric-sky/esp32-s3-cam/include/Dashboard.h`, preserving its 10-second window, expanding axes, min/max pixel bins, and peak-to-peak labels. Missing bins break the line. Canvas painting does not drive React renders.
 - `src/components/signals/node-dashboard.tsx`: one dashboard filtered by node name. Incoming `sample_batch` stream metadata determines the grid; known channels get familiar labels/colors and new channels appear automatically. Milliwatts are displayed as watts. Labels refresh four times per second.
 
 Samples use device-relative microsecond timestamps, not wall-clock dates. The shared client resets node history when its clock moves backwards after a reboot. Buffers retain at most 25 seconds and 25,000 samples per channel. The presentation delay starts at six seconds, matching the existing Electric Sky dashboard; plots fill as samples arrive. Stale values are labeled after five seconds without updates.
 
-This integration receives data only. It adds no HTTP proxy, status polling, camera controls, restart actions, or changes to the Pi/firmware. The live router and `/voices` UI will be integrated separately using the same connection. Browser tests mock the WebSocket instead of depending on live hardware.
+The node dashboards receive data only. They add no HTTP proxy, status polling, camera controls, restart actions, or changes to the Pi/firmware. Browser tests mock the WebSocket instead of depending on live hardware.
+
+## Electric Sea router interface
+
+Open `/hubs/electric-sea`. This adapts `signal-router/router/public/index.html` into the MUI documentation shell, using the existing shared WebSocket rather than another connection or an iframe.
+
+- `src/components/router/router-dashboard.tsx`: server/client details, OSC endpoints, local MIDI ports, live signal tables grouped by source, assignments, output controls, and setup help. Tables scroll horizontally on smaller screens.
+- `src/lib/router/router-interface.ts`: signal identity, scalar-to-CC normalization and smoothing, MIDI input/output, port loop prevention, persisted assignments, and the original 500 ms USB batch presentation buffer. React updates at 4 Hz while routing handles each incoming event. Rows and queued batches are bounded.
+
+Choose **Enable MIDI** to request browser MIDI access. **Send to port** routes signals to a local output; **Receive from port** forwards local input through the shared WebSocket. Enabling one direction disables the other for that port. CC uses the configured channel/controller and min/max range, with the original 0.3 smoothing. Non-CC MIDI messages pass through. Leaving Electric Sea releases its listeners, presentation timers, and MIDI ports; the shared router connection remains open for other pages.
+
+Assignments and port settings retain the original `rf-assign-`, `rf-out-`, and `rf-port-state` localStorage keys. Storage is per origin, so settings on the Pi site do not automatically transfer here. Scalar Out is local to this browser. Audio Out sends `pcm_source_enable` to the Pi and displays the server's acknowledged state; it affects the shared audio source, but does not subscribe to or play PCM in this page.
+
+OSC availability comes from the router handshake. UDP back to the browser's machine is unavailable through Cloudflare; direct LAN/VPN connections are required for that. The WebSocket URL override also supplies the origin for links to existing Pi applications. View links and Modulation spectrum open those applications on the Pi until their site integrations are implemented. Resident Frequency remains a placeholder, with the existing `/voices/` application linked in setup help.
+
+Tests cover metadata replay after client navigation, reconnects, audio acknowledgments, mapping persistence, MIDI CC output/input, port direction exclusion and cleanup, and mobile overflow. MIDI tests use simulated ports and never send to physical hardware.
 
 ## Editing the site
 
