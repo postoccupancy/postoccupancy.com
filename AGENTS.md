@@ -150,7 +150,7 @@ At completion of Electric Sea, lint, type checking, production build, and all 12
 Future work already discussed, not yet implemented:
 
 - Resident Frequency should eventually run the existing Pi `/voices` live MIDI extraction interface through the shared connection.
-- Microphone Visualizer should incorporate the existing p5/Web Audio sketch. Spectral Visualizer is now implemented; see below.
+- Microphone Visualizer and Spectral Visualizer are now implemented; see their integration sections below.
 - Node pages can grow explanatory documentation alongside their live dashboards.
 - Processing/SuperCollider and other Weather Music pages will hold artwork documentation, source, recordings, and related material.
 - Lab will hold sequential interactive DSP tutorials; Notes will hold longer-form writing.
@@ -172,3 +172,16 @@ Future work already discussed, not yet implemented:
 - `tests/visualizer.spec.ts` adds mocked selection/history, plotting, PCM/ADPCM subscription lifecycle, MIDI discovery, reboot/malformed-data, known-tone FFT accuracy, and simulated audio startup/cleanup checks. Do not activate real microphones or speaker playback merely to run regression tests.
 - During this work the user reported a WebSocket interruption. A subsequent read-only test received 717 sample batches in 12 seconds, and the local visualizer received live Electric Sky data without runtime errors. The earlier interruption’s cause was not established. A temporary approval-service failure interrupted verification separately; do not conflate it with a Pi outage.
 - Completion verification: production build, TypeScript, lint, and all 17 Playwright tests passed. A read-only live scalar check rendered spectrum, spectrogram, and modulation at approximately 251 Hz with no browser errors. PCM switching and audio lifecycle were tested with simulated data/audio, not physical playback.
+
+
+## Microphone Visualizer integration
+
+- `/interfaces/microphone-visualizer` adapts `signal-router/mic/index.html`, reusing the original p5 waveform/spectrum/spectrogram views and Web Audio analysis. p5 is pinned to the source sketch’s 1.9.0 and bundled locally, not loaded from a CDN. It is lazy-imported after client mounting because p5 requires browser globals.
+- `src/components/microphone/microphone-visualizer.tsx` owns MUI controls and lifecycle wiring; `src/lib/microphone/engine.js` owns the reused sketch, capture/analysis, and shared-connection publication.
+- The input is the browser’s default/selected local microphone. Enable microphone is an explicit user action; no media permission request occurs merely by visiting. The analyser is not connected to the audio destination and raw audio is not uploaded.
+- Clarification of the user’s routing question: the original mic app **does publish over WebSocket**, even though its input is local. It sends five normalized JSON values (RMS, bass, mid, high, centroid) at 20 Hz as `json/mic-<router-client-ip>/<parameter>`. Preserve this protocol. No local MIDI bus is required for them to reach the Pi or another Electric Sea page.
+- To convert those values to MIDI, configure CH/CC mappings and **Send to port** in Electric Sea. **Receive from port** forwards a local MIDI bus’s input to the Pi; it is not necessary for microphone JSON publication. The microphone sketch itself does not emit MIDI.
+- Keep the mic page visible in a separate window while viewing Electric Sea. The Pi excludes the sending connection when forwarding JSON messages. Navigating away releases capture, and hidden/throttled pages stop publishing rather than sending stale analyser values. This is page-local capture, not a new global background microphone service.
+- Stop/navigation/input disconnection releases media tracks and AudioContext; a permission result arriving after unmount is also released. Unmount additionally removes the p5 instance, graphics buffers, observer, timer, and router listeners. Reconnect publication waits for the current client identity.
+- Tests use a simulated microphone/AudioContext and mocked router, including two-page signal delivery without MIDI, rendering, denial/retry, visibility gating, reconnects, and delayed-permission cleanup. Do not use physical audio hardware or publish synthetic test readings to the live Pi for regression tests.
+- Completion verification: lint, TypeScript, production build, and all 20 browser/analysis tests passed. A separate visual check used Chromium’s synthetic microphone and a mocked WebSocket, with no physical capture, speaker playback, or test data sent to the live Pi.

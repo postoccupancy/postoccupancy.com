@@ -59,7 +59,7 @@ Keep route components server-rendered where practical; place browser APIs, audio
 
 Viewport mode removes the article header, breadcrumbs, width limit, and padding. The main area fills the available height; collapsing navigation releases its full width. A small navigation button remains at the top left, so application controls should leave that corner available. This fills the browser viewport, without invoking the browser Fullscreen API.
 
-DSP for Artists contains a local MDX + React example. The two node pages display live router data. Electric Sea contains the router interface, and Spectral Visualizer provides a selectable signal dashboard; other pages remain placeholders. Supabase and the existing audio/visual applications are not yet integrated.
+DSP for Artists contains a local MDX + React example. The two node pages display live router data. Electric Sea contains the router interface, Spectral Visualizer provides a selectable signal dashboard, and Microphone Visualizer analyzes local microphone input; other pages remain placeholders. Supabase and the existing audio/visual applications are not yet integrated.
 
 ## Live node dashboards
 
@@ -108,6 +108,21 @@ The router’s ESAU binary frames have no device ID. `RouterClient` tracks order
 Visualizer history retains up to 120 seconds, capped at two million samples and 12,000 chunks. Sequence/time resets clear history after a node reboot; reconnects also reset display buffers. Scalar full-scale calibration uses the original `rf.scalarFullScale.<device>` localStorage keys. The audio worklet queue is bounded as well. Signal-specific playback and controls reset when changing devices.
 
 `tests/visualizer.spec.ts` covers selection/history, all four views, plotted spectrum pixels, PCM and ADPCM ingestion, subscription switching/reconnects, malformed data, MIDI discovery, device reboot handling, known-tone FFT/power accuracy, and audio startup/cleanup with a simulated AudioContext.
+
+## Microphone Visualizer
+
+Open `/interfaces/microphone-visualizer` and choose **Enable microphone**. The page uses the browser’s default/selected microphone, not a sensor stream from the Pi. It bundles the original sketch’s p5 1.9.0 locally and preserves its waveform, spectrum, and spectrogram views, 2048-point analyser, frequency bands, log-normalized centroid, and smoothing.
+
+- `src/components/microphone/microphone-visualizer.tsx`: MUI controls, status, analysis readouts, and client-only lazy loading of p5.
+- `src/lib/microphone/engine.js`: adapted `signal-router/mic/index.html` sketch, microphone lifecycle, and publication through the shared router client.
+
+Raw audio remains on this computer and is never connected to the speakers. The original app does use a WebSocket for output: it publishes five numeric values at 20 Hz under `json/mic-<client-ip>/{rms,bass,mid,high,centroid}`. The new page preserves those keys and uses the existing shared connection. No MIDI bus is needed for these signals to appear on the Pi or another Electric Sea page.
+
+Keep the microphone page visible in one window and open Electric Sea in another. The Pi forwards JSON signals to other connections rather than echoing them to the sender. Navigating away stops capture; a hidden or stalled page does not publish frozen values. In Electric Sea, assign CH/CC and enable **Send to port** to convert the received values to local MIDI. **Receive from port** instead forwards MIDI from a local bus to the Pi. These are separate steps from microphone analysis.
+
+**Stop microphone**, navigation, or a disconnected input releases media tracks, the AudioContext, and associated processing. A late permission result after navigation also has its tracks stopped. The renderer, resize observer, publishing timer, and message subscriptions are cleaned up when the component unmounts. Visual analysis can run while the router is offline; publishing resumes after a new client identity arrives on reconnect. Microphone access requires a supported browser on HTTPS or localhost.
+
+`tests/microphone.spec.ts` uses simulated microphone and WebSocket APIs to check delivery of all five values to a second Electric Sea page without MIDI, all three views, denial/retry, hidden-page publishing, reconnects, stop/navigation cleanup, and delayed permission results. It never captures a physical microphone or plays audio.
 
 ## Editing the site
 
