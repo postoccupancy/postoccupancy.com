@@ -1,0 +1,35 @@
+.surface { min-width: 0; border-radius: 4px; background: #0a0a0a; color: #b3d9c6; padding: 16px; font-size: 13px; }
+.surface * { box-sizing: border-box; }
+.surface :global(.status) { color: #a2b3ac; margin: 8px 0 18px; }
+.surface :global(.panel), .surface :global(.device-group) { border: 1px solid #334239; margin: 0 0 18px; }
+.surface :global(.panel), .surface :global(.device-heading) { padding: 12px; }
+.surface :global(.midi-panel), .surface :global(.controls), .surface :global(.bulk-controls), .surface :global(.beat-controls) { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.surface :global(.device-heading) { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #334239; }
+.surface :global(.device-title) { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.surface h2 { margin: 0; font-size: 16px; font-weight: 600; color: #fff; overflow-wrap: anywhere; }
+.surface :global(.device-id) { color: #98aaa0; font-size: 12px; overflow-wrap: anywhere; }
+.surface button, .surface select, .surface input { font: inherit; background: #111; color: #c1e6d4; border: 1px solid #496657; padding: 6px; border-radius: 3px; }
+.surface button { cursor: pointer; }
+.surface button:focus-visible, .surface input:focus-visible, .surface select:focus-visible { outline: 2px solid #c1e6d4; outline-offset: 2px; }
+.surface button:disabled, .surface input:disabled, .surface select:disabled { cursor: not-allowed; opacity: .5; }
+.surface :global(.playing), .surface :global(.enabled) { background: #284d3b; color: #fff; }
+.surface label { display: flex; gap: 7px; align-items: center; }
+.surface input[type=range] { padding: 0; width: 110px; accent-color: #b3d9c6; }
+.surface input[type=checkbox] { accent-color: #b3d9c6; }
+.surface :global(.midi-status), .surface :global(.audio-status), .surface :global(.muted), .surface :global(.bulk-label) { color: #a2b3ac; }
+.surface :global(.bulk-controls) { margin-top: 9px; }
+.surface :global(.beat-strip) { padding: 10px 12px; border-bottom: 1px solid #334239; background: #0d0d0d; }
+.surface :global(.beat-value) { color: #fff; min-width: 3ch; }
+.surface :global(.table-scroll) { overflow-x: auto; }
+.surface table { width: 100%; min-width: 1000px; border-collapse: collapse; table-layout: fixed; }
+.surface th, .surface td { text-align: left; padding: 7px; border-bottom: 1px solid #27372f; vertical-align: top; font-variant-numeric: tabular-nums; }
+.surface th { font-size: 11px; color: #a2b3ac; }
+.surface :global(.device) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.surface :global(.voices-cell) { height: 78px; }
+.surface :global(.voices-scroll) { height: 64px; overflow-y: auto; font-size: 11px; line-height: 1.25; padding-right: 4px; }
+.surface :global(.voice) { display: block; color: #c1e6d4; margin-bottom: 2px; white-space: nowrap; }
+.surface :global(.inactive), .surface :global(.waiting) { opacity: .55; }
+.surface :global(.availability-disabled) { opacity: .55; }
+.surface :global(.global-title) { font-size: 12px; text-transform: uppercase; margin-right: 8px; }
+.surface :global(.global-output-panel) :global(.midi-panel), .surface :global(.global-output-panel) :global(.beat-strip) { border: 0; margin: 0; padding: 8px 0; background: transparent; }
+.surface :global(.resident-stream-value) { display: block; margin-top: 3px; color: #a2b3ac; }

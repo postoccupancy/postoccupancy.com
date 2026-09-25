@@ -10,7 +10,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 # Post Occupancy project context
 
-Updated 2026-09-24. This file records agreed direction and implementation context for future work. Check the actual source and Git state before acting; live service availability and dependency versions can change. `README.md` contains the user-facing development guide. `CLAUDE.md` imports this file.
+Updated 2026-09-25. This file records agreed direction and implementation context for future work. Check the actual source and Git state before acting; live service availability and dependency versions can change. `README.md` contains the user-facing development guide. `CLAUDE.md` imports this file.
 
 ## Product direction and constraints
 
@@ -64,13 +64,12 @@ Current IA and routes:
 | Nodes | Indoor Sky | `/nodes/indoor-sky` |
 | Hubs | Electric Sea | `/hubs/electric-sea` |
 | Hubs | AI Weather Station | `/hubs/ai-weather-station` |
-| Interfaces | Apartment Observatory | `/interfaces/apartment-observatory` |
+| Interfaces | Anomaly Monitor | `/interfaces/apartment-observatory` |
 | Interfaces | Spectral Visualizer | `/interfaces/spectral-visualizer` |
 | Interfaces | Microphone Visualizer | `/interfaces/microphone-visualizer` |
 | Instruments | Resident Frequency | `/instruments/resident-frequency` |
-| Instruments | Processing sketches | `/instruments/processing-sketches` |
-| Instruments | SuperCollider compositions | `/instruments/supercollider-compositions` |
-| Instruments | Other Weather Music work | `/instruments/weather-music` |
+| Instruments | Pattern Party | `/instruments/processing-sketches` |
+| Instruments | Weather Music | `/instruments/supercollider-compositions` |
 | Lab | DSP for Artists | `/lab/dsp-for-artists` |
 | Lab | Notes | `/lab/notes` |
 
@@ -108,7 +107,7 @@ The live sensor/router infrastructure runs on a Raspberry Pi 3 in `signal-router
 - `src/components/signals/router-provider.tsx` exposes `useSignalRouter()`.
 - `src/lib/signals/router-client.ts` owns connection/reconnection, discovered channels, node clocks, and bounded sample history. It reconnects with exponential delay from 1 to 15 seconds.
 - Features use `subscribeMessages()` and `send()` on that client. Passing `true` as the second subscription argument replays cached connection metadata and audio capabilities for pages mounted after the handshake. Do not replay old signal events: they could emit obsolete MIDI output.
-- JSON messages and binary frames reach subscribers. No PCM or Resident Frequency subscription is enabled automatically. Future subscribing features must handle reconnects and unsubscribe on unmount.
+- JSON messages and binary frames reach subscribers. No PCM subscription is enabled automatically. Resident Frequency subscribes only while its page is mounted and disables its subscription on unmount; other future features must do the same.
 - `sample_batch` streams include node `name`, `param`, `unit`, and samples `[sequence, deviceTimeMicroseconds, value]`. Device times are relative uptime, not wall-clock dates. A backwards clock jump resets node history.
 - HTTP status requests previously encountered CORS limitations through the Pi proxy; a Next proxy was explicitly deferred. Do not add one preemptively.
 - Earlier Electric Sky intermittency happened through local/VPN/Cloudflare paths and was resolved by the user physically resetting the ESP32. A remote restart was discussed but not executed. Treat future outages as fresh diagnostics, not automatically a website or tunnel bug.
@@ -132,11 +131,11 @@ Completed in commit `ae503f1` (`feat: integrate signal router interface into Ele
 - MIDI access starts only when the user chooses **Enable MIDI**. **Send to port** sends router values to a local output; **Receive from port** forwards local MIDI input to the router. Enabling one direction disables the other for the same named port.
 - Legacy settings retain `rf-assign-`, `rf-out-`, and `rf-port-state` localStorage keys. Storage belongs to the site origin, so the Pi site's assignments do not automatically transfer. Port direction changes are synchronized between same-origin tabs using BroadcastChannel.
 - Scalars map their configured min/max range to 0–127, with the original 0.3 smoothing. CC uses configured channel/controller assignments rather than additionally passing through raw CC bytes. Other supported MIDI messages pass through; note-offs can still release already sounding notes when a row is muted.
-- Leaving Electric Sea removes its subscriptions/timers, releases notes it sent, and closes MIDI ports. The root connection stays alive. MIDI routing is currently active only while Electric Sea is mounted; future Resident Frequency work must coordinate MIDI ownership if requirements change.
+- Leaving Electric Sea removes its subscriptions/timers, releases notes it sent, and closes MIDI ports. The root connection stays alive. MIDI routing is currently active only while Electric Sea is mounted; Resident Frequency manages its own explicitly selected browser output.
 - Scalar Out is local browser output state. **Audio Out** sends `pcm_source_enable` to the Pi, affects the shared source, and waits for acknowledged server state. It does not subscribe to or play PCM in this page.
 - OSC availability comes from the router handshake. UDP input uses port 5005, and output to directly reachable clients uses 9000. Cloudflare WebSocket access does not make browser-side UDP possible; LAN/VPN access is needed for that behavior.
 - Known node headings link to the site's node pages. View links now open the site's Spectral Visualizer with a device parameter; Modulation spectrum still opens the separate Pi application. Local recorder links to `http://127.0.0.1:3010/`. The WebSocket override supplies the origin for Pi application links.
-- Resident Frequency is still a placeholder; setup help retains a link to the working Pi `/voices/` application.
+- Resident Frequency now adapts the working Pi `/voices/` application in this site; setup help links there as a reference implementation.
 
 ## Verification and remaining scope
 
@@ -149,13 +148,11 @@ At completion of Electric Sea, lint, type checking, production build, and all 12
 - Scope navigation test selectors to the intended region when page links duplicate sidebar labels.
 
 Future work already discussed, not yet implemented:
-
-- Resident Frequency should eventually run the existing Pi `/voices` live MIDI extraction interface through the shared connection.
 - Microphone Visualizer and Spectral Visualizer are now implemented; see their integration sections below.
 - Node pages can grow explanatory documentation alongside their live dashboards.
-- Processing/SuperCollider and other Weather Music pages will hold artwork documentation, source, recordings, and related material.
+- Pattern Party and Weather Music will hold artwork documentation, source, recordings, and related material.
 - Lab will hold sequential interactive DSP tutorials; Notes will hold longer-form writing.
-- AI Weather Station, Apartment Observatory, and the remaining named routes are foundations/placeholders pending content or application integration.
+- AI Weather Station, Anomaly Monitor, and the remaining named routes are foundations/placeholders pending content or application integration.
 - Supabase history and any necessary HTTP proxy are later phases, not implicit additions to the current work.
 
 
@@ -174,6 +171,17 @@ Future work already discussed, not yet implemented:
 - During this work the user reported a WebSocket interruption. A subsequent read-only test received 717 sample batches in 12 seconds, and the local visualizer received live Electric Sky data without runtime errors. The earlier interruption’s cause was not established. A temporary approval-service failure interrupted verification separately; do not conflate it with a Pi outage.
 - Completion verification: production build, TypeScript, lint, and all 17 Playwright tests passed. A read-only live scalar check rendered spectrum, spectrogram, and modulation at approximately 251 Hz with no browser errors. PCM switching and audio lifecycle were tested with simulated data/audio, not physical playback.
 
+
+## Resident Frequency integration
+
+`/instruments/resident-frequency` now adapts the live controls from `signal-router/router/resident-live.js`. Analysis remains on the Pi: the browser consumes `resident_voices` and `resident_values` through the root shared `RouterClient`; it does not reproduce the extraction process locally.
+
+- `src/components/voices/resident-voices.tsx` mounts the page-local control surface. `voices.module.css` scopes the original dark control styling, while `src/lib/voices/template.ts` holds the static local markup and `src/lib/voices/engine.js` contains the adapted interaction code.
+- The page sends `{ type: 'resident_subscribe', enabled: true }` after each connected handshake and sends `enabled: false` on unmount. It validates and bounds incoming device, stream, voice, and value data before displaying it; stale data is cleared after 30 seconds.
+- Browser audio and MIDI stay inactive until the user explicitly enables them and chooses an output. Stream notes, pitch range, device/stream/global beat CC controls, and panic retain the Pi interface’s behavior. Audio, MIDI notes, ports, handlers, and the resident subscription are released on unmount or page hide.
+- `tests/voices.spec.ts` uses mocked router, MIDI, and AudioContext APIs to cover subscription/reconnection, data validation, MIDI and synth lifecycle, beat CC routing, panic, and cleanup. The completed verification passed lint, type checking, production build, and all 23 Playwright tests. A read-only live check displayed three live device groups with 14 of 21 streams ready; it did not start browser audio or MIDI.
+
+The current instrument labels are Resident Frequency, Pattern Party, and Weather Music. The legacy `/instruments/weather-music` folder remains only to return a deliberate 404 until a redirect or replacement is chosen; it is not part of the current navigation.
 
 ## Microphone Visualizer integration
 

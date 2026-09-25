@@ -1,10 +1,7 @@
-import type { Metadata } from 'next';
-import { PlaceholderPage } from '@/components/placeholder-page';
-import { getPage } from '@/content/site';
-
-const page = getPage('/instruments/weather-music');
-export const metadata: Metadata = { title: `${page.title} | Post Occupancy`, description: page.description };
+import { notFound } from 'next/navigation';
 
 export default function Page() {
-  return <PlaceholderPage href="/instruments/weather-music" />;
+  // This legacy route is intentionally absent from the current information
+  // architecture. Keep its folder until a redirect or replacement is chosen.
+  notFound();
 }

@@ -59,14 +59,14 @@ Keep route components server-rendered where practical; place browser APIs, audio
 
 Viewport mode removes the article header, breadcrumbs, width limit, and padding. The main area fills the available height; collapsing navigation releases its full width. A small navigation button remains at the top left, so application controls should leave that corner available. This fills the browser viewport, without invoking the browser Fullscreen API.
 
-DSP for Artists contains a local MDX + React example. The two node pages display live router data. Electric Sea contains the router interface, Spectral Visualizer provides a selectable signal dashboard, and Microphone Visualizer analyzes local microphone input; other pages remain placeholders. Supabase and the existing audio/visual applications are not yet integrated.
+DSP for Artists contains a local MDX + React example. The two node pages display live router data. Electric Sea contains the router interface, Spectral Visualizer provides a selectable signal dashboard, Microphone Visualizer analyzes local microphone input, and Resident Frequency adapts the live Pi voice controls; other pages remain placeholders. Supabase is not yet integrated.
 
 ## Live node dashboards
 
 Open `/nodes/electric-sky` or `/nodes/indoor-sky`. A single `RouterProvider` in the root providers opens `wss://rf.postoccupancy.com` and survives navigation between all pages. Set `NEXT_PUBLIC_SIGNAL_ROUTER_URL` in `.env.local` to override that address, then restart/rebuild Next.js. Each browser tab has its own connection.
 
 - `src/components/signals/router-provider.tsx`: root provider and `useSignalRouter()` hook.
-- `src/lib/signals/router-client.ts`: shared connection, reconnect handling, incoming channel discovery, and node clocks. Electric Sea uses `subscribeMessages()` and `send()` on the same client; Resident Frequency can use them later. Passing `true` as the second subscription argument replays connection metadata and audio capabilities, without replaying old signal events. Binary frames are available to subscribers too; no PCM or voices subscription is enabled automatically. Features that subscribe later must handle reconnection and unsubscribe on unmount.
+- `src/lib/signals/router-client.ts`: shared connection, reconnect handling, incoming channel discovery, and node clocks. Electric Sea and Resident Frequency use `subscribeMessages()` and `send()` on the same client. Passing `true` as the second subscription argument replays connection metadata and audio capabilities, without replaying old signal events. Binary frames are available to subscribers too; no PCM subscription is enabled automatically. Features that subscribe later must handle reconnection and unsubscribe on unmount.
 - `src/lib/signals/sample-ring.ts`: bounded sample buffers adapted from the Electric Sky firmware dashboard's `Ring` class.
 - `src/components/signals/scope-plot.tsx`: canvas renderer adapted from `electric-sky/esp32-s3-cam/include/Dashboard.h`, preserving its 10-second window, expanding axes, min/max pixel bins, and peak-to-peak labels. Missing bins break the line. Canvas painting does not drive React renders.
 - `src/components/signals/node-dashboard.tsx`: one dashboard filtered by node name. Incoming `sample_batch` stream metadata determines the grid; known channels get familiar labels/colors and new channels appear automatically. Milliwatts are displayed as watts. Labels refresh four times per second.
@@ -86,7 +86,7 @@ Choose **Enable MIDI** to request browser MIDI access. **Send to port** routes s
 
 Assignments and port settings retain the original `rf-assign-`, `rf-out-`, and `rf-port-state` localStorage keys. Storage is per origin, so settings on the Pi site do not automatically transfer here. Scalar Out is local to this browser. Audio Out sends `pcm_source_enable` to the Pi and displays the server's acknowledged state; it affects the shared audio source, but does not subscribe to or play PCM in this page.
 
-OSC availability comes from the router handshake. UDP back to the browser's machine is unavailable through Cloudflare; direct LAN/VPN connections are required for that. The WebSocket URL override also supplies the origin for links to existing Pi applications. View links open the local Spectral Visualizer with the signal’s `device` parameter. Modulation spectrum still opens the separate application on the Pi. Resident Frequency remains a placeholder, with the existing `/voices/` application linked in setup help.
+OSC availability comes from the router handshake. UDP back to the browser's machine is unavailable through Cloudflare; direct LAN/VPN connections are required for that. The WebSocket URL override also supplies the origin for links to existing Pi applications. View links open the local Spectral Visualizer with the signal’s `device` parameter. Modulation spectrum still opens the separate application on the Pi. Resident Frequency is available locally at `/instruments/resident-frequency`; setup help retains the Pi `/voices/` page as a reference.
 
 Tests cover metadata replay after client navigation, reconnects, audio acknowledgments, mapping persistence, MIDI CC output/input, port direction exclusion and cleanup, and mobile overflow. MIDI tests use simulated ports and never send to physical hardware.
 
@@ -123,6 +123,14 @@ Keep the microphone page visible in one window and open Electric Sea in another.
 **Stop microphone**, navigation, or a disconnected input releases media tracks, the AudioContext, and associated processing. A late permission result after navigation also has its tracks stopped. The renderer, resize observer, publishing timer, and message subscriptions are cleaned up when the component unmounts. Visual analysis can run while the router is offline; publishing resumes after a new client identity arrives on reconnect. Microphone access requires a supported browser on HTTPS or localhost.
 
 `tests/microphone.spec.ts` uses simulated microphone and WebSocket APIs to check delivery of all five values to a second Electric Sea page without MIDI, all three views, denial/retry, hidden-page publishing, reconnects, stop/navigation cleanup, and delayed permission results. It never captures a physical microphone or plays audio.
+
+## Resident Frequency
+
+Open `/instruments/resident-frequency` for the existing Pi `/voices/` controls inside the documentation shell. The Pi continues to perform live extraction; this page only subscribes to its `resident_voices` and `resident_values` messages through the shared router connection.
+
+The page subscribes after connecting and disables the subscription when it is closed. It validates incoming data before display, clears stale analysis, and preserves the Pi interface’s stream notes, pitch, browser synth, device/stream/global beat CC, MIDI, and panic controls. Audio and MIDI remain off until you explicitly enable them and select an output. Leaving the page releases browser audio, MIDI notes and ports, handlers, and the resident subscription.
+
+The implementation is in `src/components/voices/` and `src/lib/voices/`; `tests/voices.spec.ts` covers mocked router subscription, rendering, MIDI and synth lifecycle, beat CC controls, and cleanup. Tests never select a physical MIDI output or start real browser audio.
 
 ## Editing the site
 

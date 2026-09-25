@@ -31,7 +31,7 @@ export const groups: NavigationGroup[] = [
   },
   {
     title: 'Interfaces', id: 'interfaces', items: [
-      { title: 'Apartment Observatory', href: '/interfaces/apartment-observatory', description: 'An interactive view of the apartment’s environmental observations.' },
+      { title: 'Anomaly Monitor', href: '/interfaces/apartment-observatory', description: 'An interactive view of the apartment’s environmental observations.' },
       { title: 'Spectral Visualizer', href: '/interfaces/spectral-visualizer', description: 'Spectral views of selectable live signals.' },
       { title: 'Microphone Visualizer', href: '/interfaces/microphone-visualizer', description: 'An interactive microphone visualization using p5 and Web Audio.' },
     ],
@@ -39,9 +39,8 @@ export const groups: NavigationGroup[] = [
   {
     title: 'Instruments', id: 'instruments', items: [
       { title: 'Resident Frequency', href: '/instruments/resident-frequency', description: 'Documentation, source material, and recordings for Resident Frequency.' },
-      { title: 'Processing sketches', href: '/instruments/processing-sketches', description: 'A collection of Processing sketches, with source code and documentation.' },
-      { title: 'SuperCollider compositions', href: '/instruments/supercollider-compositions', description: 'SuperCollider compositions, source code, and recordings.' },
-      { title: 'Other Weather Music work', href: '/instruments/weather-music', description: 'Additional artworks, experiments, and recordings from Weather Music.' },
+      { title: 'Pattern Party', href: '/instruments/processing-sketches', description: 'A collection of Processing sketches, with source code and documentation.' },
+      { title: 'Weather Music', href: '/instruments/supercollider-compositions', description: 'SuperCollider compositions, source code, and recordings.' },
     ],
   },
   {
