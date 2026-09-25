@@ -183,6 +183,15 @@ Future work already discussed, not yet implemented:
 
 The current instrument labels are Resident Frequency, Pattern Party, and Weather Music. The legacy `/instruments/weather-music` folder remains only to return a deliberate 404 until a redirect or replacement is chosen; it is not part of the current navigation.
 
+## Pattern Party integration
+
+`/instruments/processing-sketches` is now the **Pattern Party** route. It adapts `signal-router/moire/index.html` into the documentation shell rather than embedding the Pi page or creating another socket.
+
+- `src/components/pattern-party/pattern-party.tsx` provides the page-local MUI controls. `src/lib/pattern-party/engine.js` keeps the p5 drawing behavior: Comb, Mesh, and Rings modes; two independently moving layers; pattern, color, and manual angle controls.
+- It receives selectable scalar/router signals and router MIDI through the shared `RouterClient`, and publishes the original derived values at 20 Hz as `json/moire/{phase,interference,beating,rate}`. The router must be connected before those derived signals are sent.
+- Direct Web MIDI input is available only after the user presses **Enable MIDI input**. Do not request MIDI permission on mount. The original channel 1–3 CC mappings update visual controls; no local MIDI output or audio is created.
+- Cleanup removes the p5 sketch, resize observer, message subscription, publishing interval, and direct MIDI listeners. Build, lint, type checking, and a production browser check passed; the browser rendered one canvas without runtime errors.
+
 ## Microphone Visualizer integration
 
 - `/interfaces/microphone-visualizer` adapts `signal-router/mic/index.html`, reusing the original p5 waveform/spectrum/spectrogram views and Web Audio analysis. p5 is pinned to the source sketch’s 1.9.0 and bundled locally, not loaded from a CDN. It is lazy-imported after client mounting because p5 requires browser globals.

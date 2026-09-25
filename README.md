@@ -59,7 +59,7 @@ Keep route components server-rendered where practical; place browser APIs, audio
 
 Viewport mode removes the article header, breadcrumbs, width limit, and padding. The main area fills the available height; collapsing navigation releases its full width. A small navigation button remains at the top left, so application controls should leave that corner available. This fills the browser viewport, without invoking the browser Fullscreen API.
 
-DSP for Artists contains a local MDX + React example. The two node pages display live router data. Electric Sea contains the router interface, Spectral Visualizer provides a selectable signal dashboard, Microphone Visualizer analyzes local microphone input, and Resident Frequency adapts the live Pi voice controls; other pages remain placeholders. Supabase is not yet integrated.
+DSP for Artists contains a local MDX + React example. The two node pages display live router data. Electric Sea contains the router interface, Spectral Visualizer provides a selectable signal dashboard, Microphone Visualizer analyzes local microphone input, Resident Frequency adapts the live Pi voice controls, and Pattern Party runs the Moiré sketch; other pages remain placeholders. Supabase is not yet integrated.
 
 ## Live node dashboards
 
@@ -131,6 +131,12 @@ Open `/instruments/resident-frequency` for the existing Pi `/voices/` controls i
 The page subscribes after connecting and disables the subscription when it is closed. It validates incoming data before display, clears stale analysis, and preserves the Pi interface’s stream notes, pitch, browser synth, device/stream/global beat CC, MIDI, and panic controls. Audio and MIDI remain off until you explicitly enable them and select an output. Leaving the page releases browser audio, MIDI notes and ports, handlers, and the resident subscription.
 
 The implementation is in `src/components/voices/` and `src/lib/voices/`; `tests/voices.spec.ts` covers mocked router subscription, rendering, MIDI and synth lifecycle, beat CC controls, and cleanup. Tests never select a physical MIDI output or start real browser audio.
+
+## Pattern Party
+
+Open `/instruments/processing-sketches` for Pattern Party, the original Moiré p5 sketch in the documentation shell. Comb, Mesh, and Rings modes retain the two-layer movement, color, pattern, and manual angle controls. The two selectors receive scalar signals from the shared router connection, while the page sends its phase, interference, beating, and rate values back as `json/moire/…` signals at 20 Hz.
+
+Choose **Enable MIDI input** only when a local controller should drive the original channel 1–3 CC mappings. MIDI permission is never requested on page load, and the page has no MIDI output or audio. Leaving the page stops p5, derived-signal publication, router listeners, resize handling, and MIDI listeners.
 
 ## Editing the site
 
