@@ -26,12 +26,12 @@ export const groups: NavigationGroup[] = [
   {
     title: 'Hubs', id: 'hubs', items: [
       { title: 'Electric Sea', href: '/hubs/electric-sea', description: 'An interface to the live signal router connecting environmental signals across Post Occupancy.' },
-      { title: 'AI Weather Station', href: '/hubs/ai-weather-station', description: 'Documentation and experiments for the AI Weather Station.' },
+      { title: 'Weather Brain', href: '/hubs/ai-weather-station', description: 'Documentation and experiments for the AI Weather Station.' },
     ],
   },
   {
     title: 'Interfaces', id: 'interfaces', items: [
-      { title: 'Anomaly Monitor', href: '/interfaces/apartment-observatory', description: 'An interactive view of the apartment’s environmental observations.' },
+      { title: 'Apartment Observatory', href: '/interfaces/apartment-observatory', description: 'An interactive view of the apartment’s environmental observations.' },
       { title: 'Spectral Visualizer', href: '/interfaces/spectral-visualizer', description: 'Spectral views of selectable live signals.' },
       { title: 'Microphone Visualizer', href: '/interfaces/microphone-visualizer', description: 'An interactive microphone visualization using p5 and Web Audio.' },
     ],
