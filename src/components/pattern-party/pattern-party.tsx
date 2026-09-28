@@ -43,18 +43,16 @@ export function PatternParty() {
   const updateColour = (target: string, key: string, value: number) => { setColourValues((current) => ({ ...current, [target]: { ...current[target], [key]: value } })); controls.current?.setColor(target, key, value); };
   const chooseSource = (kind: 'angle' | 'rate', value: string) => { if (kind === 'angle') setAngleSource(value); else setRateSource(value); controls.current?.setSource(kind, value); };
 
-  return <Box>
-    <Stack direction="row" spacing={2} useFlexGap sx={{ flexWrap: 'wrap', alignItems: 'center', mb: 1.5 }}>
-      <Button disabled={!ready} variant="outlined" size="small" onClick={() => void controls.current?.enableMidi()}>Enable MIDI input</Button>
-      <Typography variant="caption" role="status">{status}</Typography>
-      <Typography variant="caption" color="text.secondary">Router {router.status}</Typography>
-    </Stack>
-    <Box ref={root} sx={{ border: 1, borderColor: 'divider', bgcolor: '#fff', display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'minmax(0, 1fr) 264px' }, height: { xs: 'auto', md: 'calc(100dvh - 205px)' }, minHeight: { xs: 480, md: 560 }, maxHeight: { md: 760 }, overflow: 'hidden', '& canvas': { display: 'block' } }}>
+  return <Box ref={root} sx={{ width: '100%', height: '100%', minHeight: 0, bgcolor: '#fff', display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'minmax(0, 1fr) 264px' }, overflow: 'hidden', '& canvas': { display: 'block' } }}>
       <Box sx={{ minHeight: { xs: 420, md: 0 }, position: 'relative', overflow: 'hidden' }}>
         <Box data-pattern-party="canvas" sx={{ position: 'absolute', inset: 0 }} />
-        <ButtonGroup size="small" sx={{ position: 'absolute', top: 12, left: 12, zIndex: 1, bgcolor: 'rgba(255,255,255,0.92)' }}>{['Comb', 'Mesh', 'Rings'].map((name, index) => <Button key={name} variant={mode === index ? 'contained' : 'outlined'} onClick={() => { setMode(index); controls.current?.setMode(index); }}>{name}</Button>)}</ButtonGroup>
       </Box>
-      <Stack spacing={1.25} sx={{ borderLeft: { md: 1 }, borderTop: { xs: 1, md: 0 }, borderColor: 'divider', overflowY: { md: 'auto' }, p: 1.5, bgcolor: 'rgba(255,255,255,0.98)' }}>
+      <Stack spacing={1.25} sx={{ borderLeft: { md: 1 }, borderTop: { xs: 1, md: 0 }, borderColor: 'divider', overflowY: { md: 'auto' }, px: 1.5, pt: 1, pb: 1.5, bgcolor: 'rgba(255,255,255,0.98)' }}>
+        <Button disabled={!ready} variant="outlined" size="small" onClick={() => void controls.current?.enableMidi()}>Enable MIDI input</Button>
+        <Typography variant="caption" role="status">{status}</Typography>
+        <Typography variant="caption" color="text.secondary">Router {router.status}</Typography>
+        <ButtonGroup size="small" fullWidth>{['Comb', 'Mesh', 'Rings'].map((name, index) => <Button key={name} variant={mode === index ? 'contained' : 'outlined'} onClick={() => { setMode(index); controls.current?.setMode(index); }}>{name}</Button>)}</ButtonGroup>
+        <Divider />
         <Typography variant="overline" sx={{ lineHeight: 1 }}>Signal sources</Typography>
         {(['angle', 'rate'] as const).map((kind) => <FormControl key={kind} size="small"><InputLabel id={`${kind}-source-label`}>{kind === 'angle' ? 'Angle source' : 'Rate source'}</InputLabel><Select labelId={`${kind}-source-label`} label={kind === 'angle' ? 'Angle source' : 'Rate source'} value={kind === 'angle' ? angleSource : rateSource} onChange={(event) => chooseSource(kind, event.target.value)}>{sources.map((source) => <MenuItem key={source} value={source}>{source === 'none' ? 'None (manual only)' : source}</MenuItem>)}</Select></FormControl>)}
         <Divider />
@@ -66,6 +64,5 @@ export function PatternParty() {
         {parameters.slice(6).map(([key, label, cc, min, max, step]) => <Box key={key}><Stack direction="row" sx={{ justifyContent: 'space-between' }}><Typography variant="caption">{label}</Typography><Typography variant="caption" color="text.secondary">{cc}</Typography></Stack><Slider size="small" aria-label={label} value={values[key]} min={min} max={max} step={step} onChange={(_, value) => updateParam(key, value as number)} /></Box>)}
         {colors.map(([target, label, channels]) => <Box key={target}><Divider sx={{ mb: 1 }} /><Typography variant="overline" sx={{ lineHeight: 1 }}>{label} · Ch1</Typography>{channels.map(([key, name, cc]) => <Box key={key} sx={{ mt: 0.5 }}><Stack direction="row" sx={{ justifyContent: 'space-between' }}><Typography variant="caption">{name}</Typography><Typography variant="caption" color="text.secondary">{cc}</Typography></Stack><Slider size="small" aria-label={`${label} ${name}`} value={colourValues[target][key]} min={0} max={key === 'h' ? 360 : 100} onChange={(_, value) => updateColour(target, key, value as number)} /></Box>)}</Box>)}
       </Stack>
-    </Box>
   </Box>;
 }

@@ -7,5 +7,5 @@ const page = getPage('/instruments/processing-sketches');
 export const metadata: Metadata = { title: `${page.title} | Post Occupancy`, description: page.description };
 
 export default function Page() {
-  return <DocsPage title={page.title} section="Instruments" mode="dashboard"><PatternParty /></DocsPage>;
+  return <DocsPage title={page.title} section="Instruments" mode="viewport"><PatternParty /></DocsPage>;
 }
