@@ -138,6 +138,8 @@ Open `/instruments/processing-sketches` for Pattern Party, the original Moiré p
 
 Choose **Enable MIDI input** only when a local controller should drive the original channel 1–3 CC mappings. MIDI permission is never requested on page load, and the page has no MIDI output or audio. Leaving the page stops p5, derived-signal publication, router listeners, resize handling, and MIDI listeners.
 
+On desktop, the canvas and a right control rail occupy the full viewport. The rail uses the site navigation’s compact typography and muted colors, and each control names its MIDI channel/CC or note mapping. **Presentation** opens a canvas-only window with a unique session ID in its URL. A private `BroadcastChannel` synchronizes the complete control state when the window opens and on later edits; separate Pattern Party tabs and presentation windows do not share state.
+
 ## Editing the site
 
 | Change | File |

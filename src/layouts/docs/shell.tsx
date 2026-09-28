@@ -2,6 +2,7 @@
 
 import { useRef, useState, type ReactNode } from 'react';
 import NextLink from 'next/link';
+import { usePathname } from 'next/navigation';
 import Box from '@mui/material/Box';
 import Drawer from '@mui/material/Drawer';
 import IconButton from '@mui/material/IconButton';
@@ -16,11 +17,14 @@ import { DocsNavigation } from './navigation';
 const SIDEBAR_WIDTH = 280;
 
 export function DocsShell({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
   const [expanded, setExpanded] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
   const desktop = useMediaQuery(useTheme().breakpoints.up('md'));
   const opener = useRef<HTMLButtonElement>(null);
   const closer = useRef<HTMLButtonElement>(null);
+
+  if (pathname === '/instruments/processing-sketches/presentation') return <>{children}</>;
 
   function collapse() {
     setExpanded(false);

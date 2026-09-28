@@ -5,6 +5,7 @@ import { Box, Button, ButtonGroup, Divider, FormControl, InputLabel, MenuItem, S
 import { useSignalRouter } from '@/components/signals/router-provider';
 
 type Controls = ReturnType<typeof import('@/lib/pattern-party/engine').mountPatternParty>;
+type PresentationState = { mode: number; angleSource: string; rateSource: string; values: Record<string, number>; colors: Record<string, Record<string, number>>; layers: { A: { mode: string; rev: boolean }; B: { mode: string; rev: boolean } } };
 
 const parameters = [
   ['maxAngle', 'Max angle', 'Ch2 / Ch3 · CC1', 0, 90, 0.5], ['maxRate', 'Max rate', 'Ch2 / Ch3 · CC2', 0.005, 1, 0.005], ['smoothing', 'Smoothing', 'Ch2 / Ch3 · CC3', 0.01, 0.5, 0.01], ['oscDepth', 'Oscillation depth', 'Ch2 / Ch3 · CC4', 0, Math.PI, 0.01],
@@ -28,6 +29,8 @@ export function PatternParty() {
   const [values, setValues] = useState<Record<string, number>>({ maxAngle: 45, maxRate: 0.2, smoothing: 0.05, oscDepth: 0.05, manualA: 0, manualB: 0, spacing: 12, thick: 5, blur: 0 });
   const [colourValues, setColourValues] = useState<Record<string, Record<string, number>>>({ bg: { h: 0, s: 0, b: 100, o: 100 }, layerA: { h: 0, s: 0, b: 0, o: 73 }, layerB: { h: 0, s: 0, b: 0, o: 55 } });
   const [layers, setLayers] = useState({ A: { mode: 'still', rev: false }, B: { mode: 'still', rev: false } });
+  const presentationChannels = useRef(new Map<string, BroadcastChannel>());
+  const presentationState = useRef<PresentationState>({ mode, angleSource, rateSource, values, colors: colourValues, layers });
   const sources = ['none', ...[...router.devices.keys()].filter((id) => !id.startsWith('audio/')).sort()];
 
   useEffect(() => {
@@ -39,19 +42,34 @@ export function PatternParty() {
     }).catch(() => { if (!disposed) setStatus('Could not load Pattern Party. Reload to try again.'); });
     return () => { disposed = true; controls.current?.dispose(); controls.current = null; };
   }, [router]);
+  useEffect(() => () => { presentationChannels.current.forEach((channel) => channel.close()); presentationChannels.current.clear(); }, []);
+  useEffect(() => {
+    const snapshot: PresentationState = { mode, angleSource, rateSource, values, colors: colourValues, layers };
+    presentationState.current = snapshot;
+    presentationChannels.current.forEach((channel) => channel.postMessage({ type: 'state', state: snapshot }));
+  }, [mode, angleSource, rateSource, values, colourValues, layers]);
   const updateParam = (key: string, value: number) => { setValues((current) => ({ ...current, [key]: value })); controls.current?.setParam(key, value); };
   const updateColour = (target: string, key: string, value: number) => { setColourValues((current) => ({ ...current, [target]: { ...current[target], [key]: value } })); controls.current?.setColor(target, key, value); };
   const chooseSource = (kind: 'angle' | 'rate', value: string) => { if (kind === 'angle') setAngleSource(value); else setRateSource(value); controls.current?.setSource(kind, value); };
+  const openPresentation = () => {
+    const session = crypto.randomUUID();
+    const channel = new BroadcastChannel(`pattern-party:${session}`);
+    channel.onmessage = (event) => { if (event.data?.type === 'ready') channel.postMessage({ type: 'state', state: presentationState.current }); };
+    presentationChannels.current.set(session, channel);
+    channel.postMessage({ type: 'state', state: presentationState.current });
+    const presentation = window.open(`/instruments/processing-sketches/presentation?session=${encodeURIComponent(session)}`, '_blank', 'popup');
+    if (!presentation) setStatus('Presentation window was blocked by the browser.');
+  };
 
   return <Box ref={root} sx={{ width: '100%', height: '100%', minHeight: 0, bgcolor: '#fff', display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'minmax(0, 1fr) 264px' }, overflow: 'hidden', '& canvas': { display: 'block' } }}>
       <Box sx={{ minHeight: { xs: 420, md: 0 }, position: 'relative', overflow: 'hidden' }}>
         <Box data-pattern-party="canvas" sx={{ position: 'absolute', inset: 0 }} />
       </Box>
-      <Stack spacing={1.25} sx={{ borderLeft: { md: 1 }, borderTop: { xs: 1, md: 0 }, borderColor: 'divider', overflowY: { md: 'auto' }, px: 1.5, pt: 1, pb: 1.5, bgcolor: 'rgba(255,255,255,0.98)' }}>
-        <Button disabled={!ready} variant="outlined" size="small" onClick={() => void controls.current?.enableMidi()}>Enable MIDI input</Button>
-        <Typography variant="caption" role="status">{status}</Typography>
+      <Stack spacing={1.25} sx={{ borderLeft: { md: 1 }, borderTop: { xs: 1, md: 0 }, borderColor: 'divider', overflowY: { md: 'auto' }, px: 1.5, pt: 1, pb: 1.5, bgcolor: 'background.paper', color: 'text.secondary', '& .MuiButton-root': { color: 'text.secondary', borderColor: 'divider', fontSize: 12, fontWeight: 400, letterSpacing: 0, textTransform: 'none' }, '& .MuiTypography-overline': { fontSize: 11, fontWeight: 600, letterSpacing: '0.04em', color: 'text.primary' }, '& .MuiTypography-caption': { fontSize: 12 }, '& .MuiInputBase-root': { fontSize: 13, color: 'text.secondary' } }}>
+        <Stack direction="row" spacing={1}><Button disabled={!ready} variant="outlined" size="small" sx={{ flex: 1 }} onClick={() => void controls.current?.enableMidi()}>Enable MIDI input</Button><Button variant="outlined" size="small" sx={{ flex: 1 }} onClick={openPresentation}>Presentation</Button></Stack>
+        <Typography variant="caption" role="status" color="text.secondary">{status}</Typography>
         <Typography variant="caption" color="text.secondary">Router {router.status}</Typography>
-        <ButtonGroup size="small" fullWidth>{['Comb', 'Mesh', 'Rings'].map((name, index) => <Button key={name} variant={mode === index ? 'contained' : 'outlined'} onClick={() => { setMode(index); controls.current?.setMode(index); }}>{name}</Button>)}</ButtonGroup>
+        <ButtonGroup size="small" fullWidth>{['Comb', 'Mesh', 'Rings'].map((name, index) => <Button key={name} sx={{ '&.MuiButton-contained': { bgcolor: 'primary.main', color: 'primary.contrastText' } }} variant={mode === index ? 'contained' : 'outlined'} onClick={() => { setMode(index); controls.current?.setMode(index); }}>{name}</Button>)}</ButtonGroup>
         <Divider />
         <Typography variant="overline" sx={{ lineHeight: 1 }}>Signal sources</Typography>
         {(['angle', 'rate'] as const).map((kind) => <FormControl key={kind} size="small"><InputLabel id={`${kind}-source-label`}>{kind === 'angle' ? 'Angle source' : 'Rate source'}</InputLabel><Select labelId={`${kind}-source-label`} label={kind === 'angle' ? 'Angle source' : 'Rate source'} value={kind === 'angle' ? angleSource : rateSource} onChange={(event) => chooseSource(kind, event.target.value)}>{sources.map((source) => <MenuItem key={source} value={source}>{source === 'none' ? 'None (manual only)' : source}</MenuItem>)}</Select></FormControl>)}
