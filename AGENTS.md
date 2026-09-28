@@ -10,7 +10,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 # Post Occupancy project context
 
-Updated 2026-09-25. This file records agreed direction and implementation context for future work. Check the actual source and Git state before acting; live service availability and dependency versions can change. `README.md` contains the user-facing development guide. `CLAUDE.md` imports this file.
+Updated 2026-09-28. This file records agreed direction and implementation context for future work. Check the actual source and Git state before acting; live service availability and dependency versions can change. `README.md` contains the user-facing development guide. `CLAUDE.md` imports this file.
 
 ## Product direction and constraints
 
@@ -191,6 +191,7 @@ The current instrument labels are Resident Frequency, Pattern Party, and Weather
 - It receives selectable scalar/router signals and router MIDI through the shared `RouterClient`, and publishes the original derived values at 20 Hz as `json/moire/{phase,interference,beating,rate}`. The router must be connected before those derived signals are sent.
 - Direct Web MIDI input is available only after the user presses **Enable MIDI input**. Do not request MIDI permission on mount. The original channel 1–3 CC mappings update visual controls; no local MIDI output or audio is created.
 - Cleanup removes the p5 sketch, resize observer, message subscription, publishing interval, and direct MIDI listeners. Build, lint, type checking, and a production browser check passed; the browser rendered one canvas without runtime errors.
+- Desktop layout keeps the p5 canvas and a 264px right control rail within one viewport. The rail scrolls independently if needed, so control browsing never displaces the artwork. Every slider now shows its original channel/CC mapping, and layer mode controls show their channel/note mappings. On narrow screens, the rail stacks below the canvas for usable touch controls.
 
 ## Microphone Visualizer integration
 
