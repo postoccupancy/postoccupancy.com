@@ -41,6 +41,7 @@ test('sections collapse and active sections reopen on history navigation', async
   await expect(page.getByRole('heading', { level: 1, name: 'Electric Sky', exact: true })).toBeVisible();
   await expect(page).toHaveTitle('Electric Sky | Post Occupancy');
   await expect(page.getByRole('navigation', { name: 'Breadcrumb', exact: true })).toHaveText('Nodes/Electric Sky');
+  await expect(nav.getByRole('link', { name: 'Electric Sky', exact: true })).toHaveAttribute('aria-current', 'page');
 });
 
 test('collapsing the sidebar releases the full viewport width and retains a keyboard control', async ({ page }) => {
