@@ -68,8 +68,8 @@ export class RouterClient {
     let stopped = false;
     let retry: ReturnType<typeof setTimeout> | undefined;
     let attempt = 0;
-    // React labels refresh at 4 Hz; canvases read their buffers independently.
-    const refresh = setInterval(this.notify, 250);
+    // React labels refresh at Hz defined by refresh interval (10ms = 100 Hz); canvases read their buffers independently.
+    const refresh = setInterval(this.notify, 10);
     const scheduleRetry = () => {
       if (stopped) return;
       this.status = 'reconnecting';
