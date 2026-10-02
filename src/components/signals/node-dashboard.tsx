@@ -38,7 +38,13 @@ export function NodeDashboard({ node }: { node: string }) {
         </Box>
       </Stack>
       {!channels.length && <Typography color="text.secondary">Waiting for {node} channels. Plots appear as data arrives.</Typography>}
-      <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))', gap: 2 }}>
+      <Box sx={{ 
+        display: 'flex',
+        flexDirection: 'column',
+        // display: 'grid', 
+        // gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))', 
+        gap: 2 
+        }}>
         {channels.map((channel) => {
           const name = labels[channel.param] || channel.param.replaceAll('-', ' ');
           const unit = units[channel.unit.toLowerCase()] ?? channel.unit;
