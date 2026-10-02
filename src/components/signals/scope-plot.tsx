@@ -42,7 +42,7 @@ export function ScopePlot({ channel, clock, delay, color, scale, decimals, label
         const bin = Math.floor(sample.t / binUs) - firstBin;
         if (bin >= 0 && bin < mins.length) { mins[bin] = Math.min(mins[bin], value); maxs[bin] = Math.max(maxs[bin], value); }
       });
-      context.strokeStyle = '#1b252d'; context.lineWidth = ratio; context.beginPath();
+      context.strokeStyle = 'rgba(27, 37, 45, 0.05)'; context.lineWidth = ratio; context.beginPath();
       for (let i = 1; i < 4; i++) { context.moveTo(0, height * i / 4); context.lineTo(width, height * i / 4); }
       context.stroke();
       if (low !== Infinity) {
