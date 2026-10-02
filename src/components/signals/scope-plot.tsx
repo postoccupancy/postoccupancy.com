@@ -76,5 +76,5 @@ export function ScopePlot({ channel, clock, delay, color, scale, decimals, label
     frame = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(frame);
   }, [channel, clock, delay, color, scale, decimals]);
-  return <Box component="canvas" ref={canvasRef} role="img" aria-label={label} sx={{ display: 'block', width: '100%', height: 170, bgcolor: '#07090c' }} />;
+  return <Box component="canvas" ref={canvasRef} role="img" aria-label={label} sx={{ display: 'block', width: '100%', height: 170, bgcolor: 'whitesmoke' }} />;
 }
