@@ -1,10 +1,19 @@
 import type { Metadata } from 'next';
-import { PlaceholderPage } from '@/components/placeholder-page';
+import { NodeDashboard } from '@/components/signals/node-dashboard';
 import { getPage } from '@/content/site';
+import { DocsPage } from '@/layouts/docs/page';
 
-const page = getPage('/');
-export const metadata: Metadata = { title: `${page.title} | Post Occupancy`, description: page.description };
+const page = getPage('/nodes/electric-sky');
+
+export const metadata: Metadata = {
+  title: `${page.title} | Post Occupancy`,
+  description: page.description,
+};
 
 export default function Page() {
-  return <PlaceholderPage href="/" />;
+  return (
+    <DocsPage title={page.title} section="Nodes" mode="dashboard">
+      <NodeDashboard node="electric-sky" />
+    </DocsPage>
+  );
 }

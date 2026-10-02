@@ -10,12 +10,6 @@ export interface NavigationGroup {
   items: SitePage[];
 }
 
-export const overview: SitePage = {
-  title: 'Overview',
-  href: '/',
-  description: 'Post Occupancy brings together environmental sensing, sound, and software through connected nodes, hubs, interfaces, and instruments.',
-};
-
 export const groups: NavigationGroup[] = [
   {
     title: 'Nodes', id: 'nodes', items: [
@@ -51,7 +45,7 @@ export const groups: NavigationGroup[] = [
   },
 ];
 
-export const pages = [overview, ...groups.flatMap((group) => group.items)];
+export const pages = groups.flatMap((group) => group.items);
 
 export function getPage(href: string): SitePage {
   const page = pages.find((page) => page.href === href);

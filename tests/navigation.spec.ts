@@ -16,11 +16,6 @@ test('all named routes render their title, breadcrumbs, and selected navigation'
     await expect(page).toHaveTitle(`${entry.title} | Post Occupancy`);
     const nav = page.getByRole('navigation', { name: 'Main navigation' });
     const breadcrumb = page.getByRole('navigation', { name: 'Breadcrumb', exact: true });
-    if (entry.href === '/') {
-      await expect(nav.getByRole('link', { name: 'Overview', exact: true })).toHaveCount(0);
-      await expect(breadcrumb).toHaveCount(0);
-      continue;
-    }
     await expect(nav.getByRole('link', { name: entry.title, exact: true })).toHaveAttribute('aria-current', 'page');
     const section = groups.find((group) => group.items.some((item) => item.href === entry.href));
     await expect(breadcrumb).toHaveText(`${section!.title}/${entry.title}`);
@@ -43,7 +38,9 @@ test('sections collapse and active sections reopen on history navigation', async
   await expect(nav.getByRole('link', { name: 'Electric Sky' })).toBeVisible();
   await page.getByRole('link', { name: 'Post Occupancy', exact: true }).click();
   await expect(page).toHaveURL('/');
-  await expect(page.getByRole('navigation', { name: 'Breadcrumb', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('heading', { level: 1, name: 'Electric Sky', exact: true })).toBeVisible();
+  await expect(page).toHaveTitle('Electric Sky | Post Occupancy');
+  await expect(page.getByRole('navigation', { name: 'Breadcrumb', exact: true })).toHaveText('Nodes/Electric Sky');
 });
 
 test('collapsing the sidebar releases the full viewport width and retains a keyboard control', async ({ page }) => {
@@ -85,8 +82,9 @@ test('unknown routes render a real 404', async ({ page }) => {
   const response = await page.goto('/not-a-page');
   expect(response?.status()).toBe(404);
   await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible();
-  await page.getByRole('link', { name: 'Return to Overview' }).click();
+  await page.getByRole('link', { name: 'Return home' }).click();
   await expect(page).toHaveURL('/');
+  await expect(page.getByRole('heading', { level: 1, name: 'Electric Sky', exact: true })).toBeVisible();
 });
 
 test('MDX prose surrounds a working React wave explorer', async ({ page }) => {

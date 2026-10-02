@@ -38,7 +38,7 @@ ESLint is pinned to 9.39.5 because the React/import/accessibility plugins bundle
 ## Structure
 
 - `src/content/site.ts`: navigation groups, page titles, and placeholder descriptions.
-- The Post Occupancy wordmark links to Overview; it has no sidebar entry or breadcrumb. Notes lives under Lab in navigation (at `/lab/notes`). Breadcrumbs start with the current section.
+- The Post Occupancy wordmark links to Home; it has no sidebar entry or breadcrumb. Notes lives under Lab in navigation (at `/lab/notes`). Breadcrumbs start with the current section.
 - `src/app/**/page.tsx`: individual routes, ready to replace independently with real content or interactive applications.
 - `src/layouts/docs/shell.tsx`: desktop sidebar, mobile drawer, and navigation visibility. Visibility is retained during client navigation and resets on reload.
 - `src/layouts/docs/navigation.tsx`: expandable groups, links, and active states.
