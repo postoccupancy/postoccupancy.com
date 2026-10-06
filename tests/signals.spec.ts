@@ -1,11 +1,11 @@
 import { expect, test, type WebSocketRoute } from '@playwright/test';
 import { SampleRing } from '../src/lib/signals/sample-ring';
 
-function batch(node: string, param: string, unit: string, value: number, start = 100_000_000, sequence = 0, count = 101) {
+function batch(node: string, param: string, unit: string, value: number, start = 100_000_000, sequence = 0, count = 101, waveDivisor = 8) {
   return JSON.stringify({
     type: 'sample_batch', sendTimeUs: start + (count - 1) * 100_000,
     streams: [{ name: node, param, unit,
-      samples: Array.from({ length: count }, (_, i) => [sequence + i, start + i * 100_000, param === 'rms' ? value + Math.sin(i / 8) * 0.1 : value]),
+      samples: Array.from({ length: count }, (_, i) => [sequence + i, start + i * 100_000, param === 'rms' ? value + Math.sin(i / waveDivisor) * 0.1 : value]),
     }],
   });
 }
@@ -89,6 +89,12 @@ test('discovers channels, converts power, and shares one socket across routes', 
   });
   await expect.poll(async () => (await spectrogramMetrics()).filledFraction).toBeGreaterThan(0.8);
   await expect.poll(async () => (await spectrogramMetrics()).longestBlankFraction).toBeLessThan(0.03);
+  const rmsCanvas = page.getByRole('region', { name: 'Electric Sky Microphone RMS' }).getByRole('img');
+  await page.getByRole('button', { name: 'spectrum', exact: true }).click();
+  const spectrumBefore = await rmsCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
+  sockets[0].send(batch('electric-sky', 'rms', 'dbfs', -40, 110_100_000, 401, 101, 2));
+  await expect.poll(() => rmsCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())).not.toBe(spectrumBefore);
+  await page.getByRole('button', { name: 'spectrogram', exact: true }).click();
   const aggregation = page.getByRole('slider', { name: 'Aggregation', exact: true });
   await aggregation.focus(); await aggregation.press('End');
   await expect.poll(async () => (await spectrogramMetrics()).filledFraction).toBeGreaterThan(0.8);

@@ -197,13 +197,13 @@ export function SignalPlot({ channel, clock, delay, color, scale, decimals, labe
       const ends: number[] = [];
       for (let sliceEnd = start + spanUs; sliceEnd <= end; sliceEnd += spanUs) ends.push(sliceEnd);
       let index = 0;
-      function buildChunk(deadline?: IdleDeadline) {
+      function buildChunk() {
         if (generation !== rebuildGeneration) return;
         let built = 0;
-        while (index < ends.length && built < 4 && (!deadline || deadline.timeRemaining() > 2)) {
+        while (index < ends.length && built < 4) {
           const sliceEnd = ends[index++];
-        const data = series(sliceEnd);
-        const latest = data.times.at(-1);
+          const data = series(sliceEnd);
+          const latest = data.times.at(-1);
           if (latest !== undefined && sliceEnd - latest <= analysisGap(data)) {
             const spectrum = analyze(data);
             if (spectrum) { addSpectrogramEntry(sliceEnd, latest, spectrum, spanUs); currentSpectrum = spectrum; }
@@ -211,8 +211,7 @@ export function SignalPlot({ channel, clock, delay, color, scale, decimals, labe
           built++;
         }
         if (index < ends.length) {
-          if ('requestIdleCallback' in window) window.requestIdleCallback(buildChunk, { timeout: 100 });
-          else setTimeout(() => buildChunk(), 0);
+          setTimeout(buildChunk, 0);
         } else {
           rebuilding = false;
           const current = series(end);
