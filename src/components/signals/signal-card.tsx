@@ -6,9 +6,10 @@ import Pause from '@mui/icons-material/Pause';
 import PlayArrow from '@mui/icons-material/PlayArrow';
 import { Box, Button, Collapse, IconButton, Slider, Stack, Typography } from '@mui/material';
 import type { SignalAnalysisSettings } from '@/components/settings/settings-provider';
+import { VisualizerSurface } from '@/components/visualizer/visualizer-surface';
 import type { Assignment } from '@/lib/router/router-interface';
 import type { Channel, NodeClock } from '@/lib/signals/router-client';
-import { useRouterInterface } from './router-provider';
+import { useRouterInterface, useSignalRouter } from './router-provider';
 import { SignalPlot, type SignalVisualization } from './signal-plot';
 
 const gainLabel = (power: number) => `${Number((2 ** power).toFixed(2))}×`;
@@ -42,90 +43,14 @@ function AssignmentInput({ signal, field, value, fallback, onChange }: {
   </Box>;
 }
 
-function useSignalAudio(channel: Channel, gainPower: number) {
-  const [playing, setPlaying] = useState(false);
-  const [error, setError] = useState('');
-  const mounted = useRef(true);
-  const state = useRef<{ context: AudioContext; gain: GainNode; timer: ReturnType<typeof setInterval>; lastTime: number; nextStart: number; sources: Set<AudioBufferSourceNode> } | null>(null);
-
-  const dispose = () => {
-    const current = state.current;
-    state.current = null;
-    if (current) {
-      clearInterval(current.timer);
-      current.sources.forEach((source) => { try { source.stop(); } catch {} source.disconnect(); });
-      void current.context.close();
-    }
-  };
-  const stop = () => {
-    dispose();
-    setPlaying(false);
-  };
-
-  useEffect(() => { if (state.current) state.current.gain.gain.setTargetAtTime(2 ** gainPower, state.current.context.currentTime, 0.025); }, [gainPower]);
-  useEffect(() => () => { mounted.current = false; dispose(); }, []);
-
-  const start = async () => {
-    setError('');
-    try {
-      const context = new AudioContext();
-      const highpass = context.createBiquadFilter();
-      highpass.type = 'highpass'; highpass.frequency.value = 0.001; highpass.Q.value = 0.707;
-      const gain = context.createGain();
-      gain.gain.value = 2 ** gainPower;
-      highpass.connect(gain).connect(context.destination);
-      await context.resume();
-      if (!mounted.current) { void context.close(); return; }
-      const latest = channel.ring.latest();
-      const current = { context, gain, lastTime: latest ? latest.t - 500_000 : -1, nextStart: context.currentTime + 0.15, sources: new Set<AudioBufferSourceNode>(), timer: 0 as unknown as ReturnType<typeof setInterval> };
-      const feed = () => {
-        if (state.current !== current || !(channel.sampleRate > 0)) return;
-        const samples: { t: number; v: number }[] = [];
-        channel.ring.visitRange(current.lastTime + Number.EPSILON, Infinity, (sample) => samples.push(sample));
-        if (samples.length < 2) return;
-        current.lastTime = samples.at(-1)!.t;
-        let mean = 0;
-        samples.forEach((sample) => { mean += sample.v; }); mean /= samples.length;
-        let peak = 0;
-        samples.forEach((sample) => { peak = Math.max(peak, Math.abs(sample.v - mean)); });
-        const storageKey = `rf.scalarFullScale.osc/${channel.node}/${channel.param}`;
-        let fullScale = peak ? peak * 16 : Number(localStorage.getItem(storageKey)) || 0;
-        if (peak) { try { localStorage.setItem(storageKey, String(fullScale)); } catch {} }
-        fullScale ||= 1;
-        const duration = samples.length / channel.sampleRate;
-        const outputLength = Math.max(1, Math.round(duration * context.sampleRate));
-        const buffer = context.createBuffer(1, outputLength, context.sampleRate);
-        const output = buffer.getChannelData(0);
-        for (let index = 0; index < output.length; index++) {
-          const position = index / Math.max(1, output.length - 1) * (samples.length - 1);
-          const low = Math.floor(position); const high = Math.min(samples.length - 1, low + 1); const mix = position - low;
-          output[index] = (samples[low].v * (1 - mix) + samples[high].v * mix - mean) / fullScale;
-        }
-        const now = context.currentTime;
-        if (current.nextStart < now + 0.02) current.nextStart = now + 0.15;
-        const source = context.createBufferSource();
-        source.buffer = buffer; source.connect(highpass); current.sources.add(source);
-        source.onended = () => { current.sources.delete(source); source.disconnect(); };
-        source.start(current.nextStart); current.nextStart += buffer.duration;
-      };
-      current.timer = setInterval(feed, 50);
-      state.current = current;
-      feed();
-      setPlaying(true);
-    } catch {
-      stop();
-      setError('Audio could not start. Check browser audio permissions and try again.');
-    }
-  };
-
-  return { playing, error, toggle: () => playing ? stop() : void start() };
-}
-
 export function SignalCard({ channel, clock, delay, color, scale, decimals, name, source, value, stale, visualization, windowSeconds, aggregationMs, analysisSettings }: {
   channel: Channel; clock?: NodeClock; delay: number; color: string; scale: number; decimals: number; name: string; source: string; value: string; stale: boolean;
   visualization: SignalVisualization; windowSeconds: number; aggregationMs: number; analysisSettings: SignalAnalysisSettings;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const audioRoot = useRef<HTMLDivElement>(null);
+  const router = useSignalRouter();
   const signal = `osc/${channel.node}/${channel.param}`;
   const gainKey = `rf-signal-gain-${signal}`;
   const [gainPower, setGainPower] = useState(2);
@@ -144,8 +69,34 @@ export function SignalCard({ channel, clock, delay, color, scale, decimals, name
   const model = useRouterInterface();
   const row = model.rows.get(signal);
   const assignment = row?.assignment ?? {};
-  const audio = useSignalAudio(channel, gainPower);
-  const custom = [assignment.channel !== undefined && `MIDI Ch ${assignment.channel}`, assignment.cc !== undefined && `CC ${assignment.cc}`, assignment.min !== undefined && `Min ${assignment.min}`, assignment.max !== undefined && `Max ${assignment.max}`, customGain && `Gain ${gainLabel(gainPower)}`, audio.playing && 'Audio playing'].filter(Boolean) as string[];
+  const custom = [assignment.channel !== undefined && `MIDI Ch ${assignment.channel}`, assignment.cc !== undefined && `CC ${assignment.cc}`, assignment.min !== undefined && `Min ${assignment.min}`, assignment.max !== undefined && `Max ${assignment.max}`, customGain && `Gain ${gainLabel(gainPower)}`, playing && 'Audio playing'].filter(Boolean) as string[];
+  const audioMounted = expanded || playing;
+
+  useEffect(() => {
+    if (!audioMounted || !audioRoot.current) return;
+    const button = audioRoot.current.querySelector<HTMLButtonElement>('[data-viz="audio"]');
+    const gain = audioRoot.current.querySelector<HTMLInputElement>('[data-viz="gainControl"]');
+    if (!button || !gain) return;
+    gain.value = String(gainPower);
+    gain.dispatchEvent(new Event('input', { bubbles: true }));
+    const update = () => setPlaying(button.getAttribute('aria-pressed') === 'true');
+    update();
+    const observer = new MutationObserver(update);
+    observer.observe(button, { attributes: true, attributeFilter: ['aria-pressed'] });
+    return () => observer.disconnect();
+  }, [audioMounted, gainPower]);
+
+  function toggleAudio() {
+    const button = audioRoot.current?.querySelector<HTMLButtonElement>('[data-viz="audio"]');
+    if (button && !button.disabled) button.click();
+  }
+
+  function updateGain(next: number) {
+    setGainPower(next); setCustomGain(true);
+    try { localStorage.setItem(gainKey, String(next)); } catch {}
+    const gain = audioRoot.current?.querySelector<HTMLInputElement>('[data-viz="gainControl"]');
+    if (gain) { gain.value = String(next); gain.dispatchEvent(new Event('input', { bubbles: true })); }
+  }
   return <Box component="section" aria-label={`${source} ${name}`} sx={{ minWidth: 0, border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
     <Stack direction="row" spacing={1} sx={{ px: 1.5, py: 0.75, justifyContent: 'space-between', alignItems: 'center' }}>
       <Stack direction="row" spacing={1} sx={{ alignItems: 'center', minWidth: 0 }}>
@@ -166,12 +117,12 @@ export function SignalCard({ channel, clock, delay, color, scale, decimals, name
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mt: 2, alignItems: { sm: 'center' } }}>
           <Box sx={{ flex: 1, maxWidth: 360 }}>
             <Stack direction="row" sx={{ justifyContent: 'space-between' }}><Typography id={`${signal}-gain`} variant="caption">Gain</Typography><Typography variant="caption" color="text.secondary">{gainLabel(gainPower)}</Typography></Stack>
-            <Slider aria-labelledby={`${signal}-gain`} value={gainPower} min={-6} max={15} step={1} size="small" onChange={(_, next) => { const value = Number(next); setGainPower(value); setCustomGain(true); try { localStorage.setItem(gainKey, String(value)); } catch {} }} />
+            <Slider aria-labelledby={`${signal}-gain`} value={gainPower} min={-6} max={15} step={1} size="small" onChange={(_, next) => updateGain(Number(next))} />
           </Box>
-          <Button variant={audio.playing ? 'contained' : 'outlined'} startIcon={audio.playing ? <Pause /> : <PlayArrow />} aria-pressed={audio.playing} onClick={audio.toggle}>{audio.playing ? 'Pause audio' : 'Start audio'}</Button>
+          <Button variant={playing ? 'contained' : 'outlined'} startIcon={playing ? <Pause /> : <PlayArrow />} aria-pressed={playing} onClick={toggleAudio}>{playing ? 'Pause audio' : 'Start audio'}</Button>
         </Stack>
-        {audio.error && <Typography role="status" variant="caption" color="error">{audio.error}</Typography>}
       </Box>
     </Collapse>
+    {audioMounted && <Box ref={audioRoot} sx={{ display: 'none' }}><VisualizerSurface device={signal} router={router} /></Box>}
   </Box>;
 }

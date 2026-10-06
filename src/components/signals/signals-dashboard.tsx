@@ -72,22 +72,24 @@ export function SignalsDashboard() {
           <Typography role="status" aria-label="Connection status" variant="body2" sx={{ color: fresh && router.status === 'connected' ? 'primary.main' : 'text.secondary' }}>{status}</Typography>
           <Typography variant="body2" color="text.secondary">· {Number(presentationDelay.toFixed(2))}s delay</Typography>
         </Stack>
-        <ToggleButtonGroup exclusive size="small" value={visualization} aria-label="Visualization type" onChange={(_, value: SignalVisualization | null) => { if (value) setVisualization(value); }} sx={{ alignSelf: 'flex-start', flexWrap: 'wrap' }}>
-          {(['waveform', 'spectrum', 'spectrogram', 'modulation'] as const).map((view) => <ToggleButton key={view} value={view} aria-label={view}>{view}</ToggleButton>)}
-        </ToggleButtonGroup>
-        <Stack direction="row" spacing={1.5} useFlexGap sx={{ flexWrap: 'wrap' }}>
-          <FormControl size="small" sx={{ minWidth: 180 }}>
-            <InputLabel id="signals-node-filter">Node</InputLabel>
-            <Select labelId="signals-node-filter" label="Node" multiple value={selectedNodes} renderValue={(selected) => selected.length === nodes.length ? 'All nodes' : selected.map(nodeLabel).join(', ')} onChange={(event) => setSelectedNodes(typeof event.target.value === 'string' ? event.target.value.split(',') : event.target.value)}>
-              {nodes.map((node) => <MenuItem key={node} value={node}><Checkbox checked={selectedNodes.includes(node)} /><ListItemText primary={nodeLabel(node)} /></MenuItem>)}
-            </Select>
-          </FormControl>
-          <FormControl size="small" sx={{ minWidth: 180 }}>
-            <InputLabel id="signals-type-filter">Sensor type</InputLabel>
-            <Select labelId="signals-type-filter" label="Sensor type" multiple value={selectedTypes} renderValue={(selected) => selected.length === sensorTypes.length ? 'All sensor types' : selected.join(', ')} onChange={(event) => setSelectedTypes((typeof event.target.value === 'string' ? event.target.value.split(',') : event.target.value) as SensorType[])}>
-              {sensorTypes.map((type) => <MenuItem key={type} value={type}><Checkbox checked={selectedTypes.includes(type)} /><ListItemText primary={type} /></MenuItem>)}
-            </Select>
-          </FormControl>
+        <Stack direction="row" spacing={2} useFlexGap sx={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' }}>
+          <ToggleButtonGroup exclusive size="small" value={visualization} aria-label="Visualization type" onChange={(_, value: SignalVisualization | null) => { if (value) setVisualization(value); }} sx={{ flexWrap: 'wrap' }}>
+            {(['waveform', 'spectrum', 'spectrogram', 'modulation'] as const).map((view) => <ToggleButton key={view} value={view} aria-label={view}>{view}</ToggleButton>)}
+          </ToggleButtonGroup>
+          <Stack direction="row" spacing={1.5} useFlexGap sx={{ flexWrap: 'wrap', ml: 'auto' }}>
+            <FormControl size="small" sx={{ minWidth: 180 }}>
+              <InputLabel id="signals-node-filter">Node</InputLabel>
+              <Select labelId="signals-node-filter" label="Node" multiple value={selectedNodes} renderValue={(selected) => selected.length === nodes.length ? 'All nodes' : selected.map(nodeLabel).join(', ')} onChange={(event) => setSelectedNodes(typeof event.target.value === 'string' ? event.target.value.split(',') : event.target.value)}>
+                {nodes.map((node) => <MenuItem key={node} value={node}><Checkbox checked={selectedNodes.includes(node)} /><ListItemText primary={nodeLabel(node)} /></MenuItem>)}
+              </Select>
+            </FormControl>
+            <FormControl size="small" sx={{ minWidth: 180 }}>
+              <InputLabel id="signals-type-filter">Sensor type</InputLabel>
+              <Select labelId="signals-type-filter" label="Sensor type" multiple value={selectedTypes} renderValue={(selected) => selected.length === sensorTypes.length ? 'All sensor types' : selected.join(', ')} onChange={(event) => setSelectedTypes((typeof event.target.value === 'string' ? event.target.value.split(',') : event.target.value) as SensorType[])}>
+                {sensorTypes.map((type) => <MenuItem key={type} value={type}><Checkbox checked={selectedTypes.includes(type)} /><ListItemText primary={type} /></MenuItem>)}
+              </Select>
+            </FormControl>
+          </Stack>
         </Stack>
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: { xs: 2, md: 4 }, maxWidth: 900 }}>
           <Box>

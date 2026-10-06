@@ -68,6 +68,8 @@ export function SignalPlot({ channel, clock, delay, color, scale, decimals, labe
   analysisSettings: SignalAnalysisSettings;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const visualizationRef = useRef(visualization);
+  useEffect(() => { visualizationRef.current = visualization; }, [visualization]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -80,7 +82,7 @@ export function SignalPlot({ channel, clock, delay, color, scale, decimals, labe
     let axisLow = Infinity;
     let axisHigh = -Infinity;
     let currentSpectrum: SpectrumData | null = null;
-    const spectrogram: { time: number; spectrum: SpectrumData }[] = [];
+    const spectrogram: { time: number; spanUs: number; spectrum: SpectrumData }[] = [];
     const modulation = new ModulationAnalysis();
     const modulationField = document.createElement('canvas');
     const modulationContext = modulationField.getContext('2d')!;
@@ -158,6 +160,25 @@ export function SignalPlot({ channel, clock, delay, color, scale, decimals, labe
       const rawPoints = analysisSettings.bands ? logBandAverage(spectrum) : spectrumPoints(spectrum);
       const points = analysisSettings.spectrumMode === 'relative' ? filterBackground(rawPoints) : rawPoints;
       return { ...spectrum, rawPoints, points, referencePsd };
+    }
+
+    function analysisGap(data: ReturnType<typeof series>) {
+      return aggregationMs ? aggregationMs * 1500 : data.rate > 0 ? 2.5e6 / data.rate : 250_000;
+    }
+
+    function rebuildSpectrogram(end: number) {
+      spectrogram.length = 0;
+      const start = end - windowSeconds * 1e6;
+      const spanUs = Math.max(100_000, aggregationMs * 1000, windowSeconds * 1e6 / 120);
+      for (let sliceEnd = start + spanUs; sliceEnd <= end; sliceEnd += spanUs) {
+        const data = series(sliceEnd);
+        const latest = data.times.at(-1);
+        if (latest === undefined || sliceEnd - latest > analysisGap(data)) continue;
+        const spectrum = analyze(data);
+        if (spectrum) { spectrogram.push({ time: sliceEnd, spanUs, spectrum }); currentSpectrum = spectrum; }
+      }
+      const current = series(end);
+      lastAnalysisTime = current.times.at(-1) ?? -1;
     }
 
     function drawWaveform(data: ReturnType<typeof series>) {
@@ -262,15 +283,16 @@ export function SignalPlot({ channel, clock, delay, color, scale, decimals, labe
       if (!visible.length) { text(size, 'Waiting for enough samples', `${windowSeconds} s visible`); return; }
       const rows = Math.min(96, Math.max(24, Math.floor(size.height / (2 * size.ratio))));
       for (const entry of visible) {
-        const x = (entry.time - start) / (windowSeconds * 1e6) * size.width;
-        const width = Math.max(size.ratio, size.width / Math.max(1, visible.length));
+        const x = Math.max(0, (entry.time - entry.spanUs - start) / (windowSeconds * 1e6) * size.width);
+        const right = Math.min(size.width, (entry.time - start) / (windowSeconds * 1e6) * size.width);
+        const width = Math.max(size.ratio, right - x);
         for (let row = 0; row < rows; row++) {
           const position = 1 - row / Math.max(1, rows - 1);
           const points = entry.spectrum.points;
           const frequency = frequencyAt(position, points);
           const hue = 240 - level(valueAtFrequency(frequency, points, analysisSettings.smooth), entry.spectrum) * 190;
           context!.fillStyle = `hsl(${hue} 90% 38%)`;
-          context!.fillRect(x - width, row / rows * size.height, width + size.ratio, size.height / rows + size.ratio);
+          context!.fillRect(x, row / rows * size.height, width + size.ratio, size.height / rows + size.ratio);
         }
       }
       text(size, `${(visible.at(-1)!.spectrum.sampleRate / 2).toFixed(1)} Hz`, `${windowSeconds} s visible`, 'frequency ↑ · time →');
@@ -299,6 +321,9 @@ export function SignalPlot({ channel, clock, delay, color, scale, decimals, labe
       text(size, `${metadata.minFrequency.toFixed(2)}–${metadata.maxFrequency.toFixed(1)} Hz`, `${windowSeconds} s analysis`, `steady/current · modulation ${metadata.minModulation.toFixed(2)}–${metadata.maxModulation.toFixed(2)} Hz`);
     }
 
+    const initialEnd = endTime(performance.now());
+    rebuildSpectrogram(initialEnd);
+
     function draw(now: number) {
       animationFrame = requestAnimationFrame(draw);
       if (now - lastDraw < 1000 / 30) return;
@@ -307,28 +332,30 @@ export function SignalPlot({ channel, clock, delay, color, scale, decimals, labe
       const visible = bounds.bottom >= 0 && bounds.top <= window.innerHeight;
       const end = endTime(now);
       const data = series(end);
-      if (visualization === 'waveform') { if (visible) drawWaveform(data); return; }
       const latest = data.times.at(-1) ?? -1;
       if (latest !== lastAnalysisTime && now - lastAnalysisDraw >= 100) {
         lastAnalysisDraw = now;
         lastAnalysisTime = latest;
         currentSpectrum = analyze(data);
         if (currentSpectrum) {
-          spectrogram.push({ time: latest, spectrum: currentSpectrum });
-          while (spectrogram.length && latest - spectrogram[0].time > 60e6) spectrogram.shift();
+          const spanUs = Math.max(100_000, aggregationMs * 1000);
+          spectrogram.push({ time: end, spanUs, spectrum: currentSpectrum });
+          while (spectrogram.length && end - spectrogram[0].time > 60e6) spectrogram.shift();
           const analysisRate = Math.min(25, Math.max(2, (data.rate || 8) / 4));
           modulation.ingest(currentSpectrum, latest, analysisRate, analysisSettings.spectrumMode === 'relative' ? 'filtered' : 'raw');
         }
       }
       if (!visible) return;
-      if (visualization === 'spectrum') drawSpectrum(currentSpectrum);
-      else if (visualization === 'spectrogram') drawSpectrogram(end);
+      const view = visualizationRef.current;
+      if (view === 'waveform') drawWaveform(data);
+      else if (view === 'spectrum') drawSpectrum(currentSpectrum);
+      else if (view === 'spectrogram') drawSpectrogram(end);
       else drawModulation(currentSpectrum);
     }
 
     animationFrame = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(animationFrame);
-  }, [aggregationMs, analysisSettings, channel, clock, color, decimals, delay, scale, visualization, windowSeconds]);
+  }, [aggregationMs, analysisSettings, channel, clock, color, decimals, delay, scale, windowSeconds]);
 
   return <Box component="canvas" ref={canvasRef} role="img" aria-label={`${label} ${visualization} view · ${windowSeconds} second window`} sx={{ display: 'block', width: '100%', height: 170, bgcolor: 'whitesmoke' }} />;
 }

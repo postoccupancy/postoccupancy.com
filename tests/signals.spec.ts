@@ -1,11 +1,11 @@
 import { expect, test, type WebSocketRoute } from '@playwright/test';
 import { SampleRing } from '../src/lib/signals/sample-ring';
 
-function batch(node: string, param: string, unit: string, value: number, start = 100_000_000, sequence = 0) {
+function batch(node: string, param: string, unit: string, value: number, start = 100_000_000, sequence = 0, count = 101) {
   return JSON.stringify({
-    type: 'sample_batch', sendTimeUs: start + 10_000_000,
+    type: 'sample_batch', sendTimeUs: start + (count - 1) * 100_000,
     streams: [{ name: node, param, unit,
-      samples: Array.from({ length: 101 }, (_, i) => [sequence + i, start + i * 100_000, value]),
+      samples: Array.from({ length: count }, (_, i) => [sequence + i, start + i * 100_000, param === 'rms' ? value + Math.sin(i / 8) * 0.1 : value]),
     }],
   });
 }
@@ -16,7 +16,7 @@ test('discovers channels, converts power, and shares one socket across routes', 
   page.on('pageerror', (error) => errors.push(error.message));
   await page.routeWebSocket('wss://rf.postoccupancy.com', (socket) => {
     sockets.push(socket);
-    socket.send(batch('electric-sky', 'rms', 'dbfs', -40));
+    socket.send(batch('electric-sky', 'rms', 'dbfs', -40, 70_000_000, 0, 401));
     socket.send(batch('indoor-sky', 'rms', 'dbfs', -42));
     socket.send(batch('electric-sky', 'temperature', 'celsius', 23.5));
     socket.send(batch('electric-sky', 'power', 'mw', 1250));
@@ -33,7 +33,7 @@ test('discovers channels, converts power, and shares one socket across routes', 
   await expect(page.getByRole('region', { name: 'invalid', exact: true })).toHaveCount(0);
   const temperatureCard = page.getByRole('region', { name: 'Electric Sky Temperature', exact: true });
   await temperatureCard.getByRole('button', { name: 'Open settings for osc/electric-sky/temperature' }).click();
-  await expect(temperatureCard.getByText('osc/electric-sky/temperature', { exact: true })).toBeVisible();
+  await expect(temperatureCard.getByRole('paragraph').filter({ hasText: 'osc/electric-sky/temperature' })).toBeVisible();
   await expect(temperatureCard.getByRole('link')).toHaveCount(0);
   await temperatureCard.getByRole('combobox', { name: 'MIDI channel' }).selectOption('3');
   await temperatureCard.getByRole('combobox', { name: 'CC' }).selectOption('21');
@@ -43,11 +43,14 @@ test('discovers channels, converts power, and shares one socket across routes', 
   await temperatureCard.getByRole('spinbutton', { name: 'MAX' }).press('Enter');
   const gain = temperatureCard.getByRole('slider', { name: 'Gain', exact: true });
   await gain.focus(); await gain.press('ArrowRight');
+  await expect(temperatureCard.locator('[data-viz="gainControl"]')).toHaveValue('3');
   const audio = temperatureCard.getByRole('button', { name: 'Start audio' });
   await expect(audio.locator('svg')).toBeVisible();
   await audio.click();
+  await expect(temperatureCard.locator('[data-viz="audio"]')).toHaveAttribute('aria-pressed', 'true');
   await expect(temperatureCard.getByRole('button', { name: 'Pause audio' }).locator('svg')).toBeVisible();
   await temperatureCard.getByRole('button', { name: 'Pause audio' }).click();
+  await expect(temperatureCard.locator('[data-viz="audio"]')).toHaveAttribute('aria-pressed', 'false');
   await temperatureCard.getByRole('button', { name: 'Close settings for osc/electric-sky/temperature' }).click();
   await expect(temperatureCard).toContainText('MIDI Ch 3 · CC 21 · Min 10 · Max 35 · Gain 8×');
   const charts = page.getByRole('img', { name: /view · 10 second window/ });
@@ -66,6 +69,24 @@ test('discovers channels, converts power, and shares one socket across routes', 
   await nodeFilter.click();
   await page.getByRole('option', { name: /Indoor Sky/ }).click();
   await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'spectrogram', exact: true }).click();
+  const filledFraction = () => page.getByRole('region', { name: 'Electric Sky Microphone RMS' }).getByRole('img').evaluate((canvas: HTMLCanvasElement) => {
+    const context = canvas.getContext('2d')!;
+    const y = Math.floor(canvas.height * 0.6);
+    const pixels = context.getImageData(0, y, canvas.width, 1).data;
+    let filled = 0;
+    for (let x = 0; x < canvas.width; x++) {
+      const offset = x * 4;
+      if (pixels[offset] < 230 || pixels[offset + 1] < 230 || pixels[offset + 2] < 230) filled++;
+    }
+    return filled / canvas.width;
+  });
+  await expect.poll(filledFraction).toBeGreaterThan(0.8);
+  const aggregation = page.getByRole('slider', { name: 'Aggregation', exact: true });
+  await aggregation.focus(); await aggregation.press('End');
+  await expect.poll(filledFraction).toBeGreaterThan(0.8);
+  await aggregation.press('Home');
+  await page.getByRole('button', { name: 'waveform', exact: true }).click();
   await expect(charts.first()).toHaveAccessibleName(/waveform view/);
   for (const view of ['spectrum', 'spectrogram', 'modulation', 'waveform']) {
     await page.getByRole('button', { name: view, exact: true }).click();
@@ -76,7 +97,6 @@ test('discovers channels, converts power, and shares one socket across routes', 
   await expect(page.getByText('0.001 s', { exact: true }).first()).toBeVisible();
   await timeWindow.press('End');
   await expect(page.getByText('60 s', { exact: true }).first()).toBeVisible();
-  const aggregation = page.getByRole('slider', { name: 'Aggregation', exact: true });
   await expect(page.getByText('native', { exact: true }).first()).toBeVisible();
   await aggregation.focus(); await aggregation.press('End');
   await expect(page.getByText('1.0 Hz', { exact: true }).first()).toBeVisible();
