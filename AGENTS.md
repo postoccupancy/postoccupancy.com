@@ -69,6 +69,8 @@ Historical deployment context: removing `docs/` from `b2b-dashboard-demo/.vercel
 - `SampleRing` retains up to 120 seconds while keeping its 25,000-sample cap so the 60-second view plus presentation delay remains available at current sensor rates.
 - FFT size, Welch segments, bands, smoothing, centroid, frequency scale, spectrum mode, and color palette are global under Settings → Signals and apply to both Signals charts and the dedicated visualizer. Preserve the original defaults except spectrum mode now defaults to the existing filtered calculation and is labeled `relative` in the interface.
 - Validation for this phase: lint, type checking, and production build passed. The focused Signals/visualizer suite passed all nine tests. The full browser run passed 23 tests before the final pre-existing Voices timing test timed out; that test passed immediately when rerun alone.
+- Signal chart rows now have expandable per-signal settings. They expose the canonical `osc/<node>/<parameter>` name, the corresponding `rf.postoccupancy.com/<node>/` dashboard, shared RouterInterface MIDI/range assignments, persisted gain, and user-initiated local audio with play/pause icons. Collapsed cards summarize assigned values; audio resources close on pause or unmount.
+- Validation for per-signal settings: lint, type checking, production build, and all 24 Playwright tests passed. Browser tests exercise expansion, node link, assignments, gain, playback state/icons, cleanup, and the collapsed summary without using physical audio or MIDI hardware.
 
 ## Navigation and layout decisions
 

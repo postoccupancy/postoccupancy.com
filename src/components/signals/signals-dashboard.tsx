@@ -10,7 +10,8 @@ import Typography from '@mui/material/Typography';
 import { useSettings } from '@/components/settings/settings-provider';
 import { formatAggregation, formatWindow, VISUALIZER_AGGREGATION_MS, VISUALIZER_WINDOWS_SECONDS } from '@/lib/visualizer/controls';
 import { useSignalRouter } from './router-provider';
-import { SignalPlot, type SignalVisualization } from './signal-plot';
+import { SignalCard } from './signal-card';
+import type { SignalVisualization } from './signal-plot';
 
 // Presentation hints only: incoming metadata determines which channels exist.
 const labels: Record<string, string> = { temperature: 'Temperature', humidity: 'Humidity', pressure: 'Pressure', power: 'Power', 'solar-power': 'Solar input power', rms: 'Microphone RMS', 'solar-voltage': 'Solar voltage', 'solar-current': 'Solar current' };
@@ -77,18 +78,7 @@ export function SignalsDashboard() {
           const latest = channel.ring.latest();
           const stale = channel.receivedAt === 0 || now - channel.receivedAt >= 5000 || router.status !== 'connected';
           const value = latest ? `${(latest.v * scale).toFixed(decimals)} ${unit}`.trim() : '—';
-          return (
-            <Box component="section" aria-label={`${source} ${name}`} key={channel.id} sx={{ minWidth: 0, border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
-              <Stack direction="row" spacing={1} sx={{ px: 1.5, py: 1, justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap' }}>
-                <Stack direction="row" spacing={1} sx={{ alignItems: 'baseline' }}>
-                  <Typography component="h2" variant="body2" sx={{ fontWeight: 600 }}>{name}</Typography>
-                  <Typography variant="caption" color="text.secondary">{source}</Typography>
-                </Stack>
-                <Typography component="output" aria-live="off" variant="body2" sx={{ fontVariantNumeric: 'tabular-nums', color: stale ? 'text.secondary' : 'text.primary' }}>{value}{stale && latest ? ' · stale' : ''}</Typography>
-              </Stack>
-              <SignalPlot channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} color={colors[channel.param] || '#9bc9d8'} scale={scale} decimals={decimals} visualization={visualization} windowSeconds={windowSeconds} aggregationMs={aggregationMs} analysisSettings={signalAnalysis} label={`${source} ${name}: ${value}${stale ? ', stale data' : ''}.`} />
-            </Box>
-          );
+          return <SignalCard key={channel.id} channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} color={colors[channel.param] || '#9bc9d8'} scale={scale} decimals={decimals} name={name} source={source} value={value} stale={stale} visualization={visualization} windowSeconds={windowSeconds} aggregationMs={aggregationMs} analysisSettings={signalAnalysis} />;
         })}
       </Box>
     </Box>
