@@ -21,8 +21,9 @@ function writeStorage(key, value) {
  * @param {HTMLElement} root
  * @param {string} device
  * @param {import('../signals/router-client').RouterClient} router
+ * @param {import('../../components/settings/settings-provider').SignalAnalysisSettings} settings
  */
-export function mountVisualizer(root, device, router) {
+export function mountVisualizer(root, device, router, settings) {
   let disposed = false,
     animationFrame = 0;
   const events = new AbortController(),
@@ -79,8 +80,8 @@ export function mountVisualizer(root, device, router) {
   const welchSegments = [1, 2, 4, 8, 16];
   let view = 'wave',
     windowSeconds = .043,
-    frequencyMode = 'log',
-    spectralMode = 'raw',
+    frequencyMode = settings.frequencyScale,
+    spectralMode = settings.spectrumMode === 'relative' ? 'filtered' : 'raw',
     lastDraw = 0,
     lastSpectro = 0,
     unit = '',
@@ -319,7 +320,7 @@ export function mountVisualizer(root, device, router) {
   bandAverage.onchange = () => modulation.reset();
   spectrumMode.onclick = () => {
     spectralMode = spectralMode === 'raw' ? 'filtered' : 'raw';
-    spectrumMode.textContent = 'spectrum: ' + spectralMode;
+    spectrumMode.textContent = 'spectrum: ' + (spectralMode === 'filtered' ? 'relative' : 'raw');
     modulation.reset();
   };
   const IMA_INDEX = [-1, -1, -1, -1, 2, 4, 6, 8],
@@ -1051,7 +1052,7 @@ registerProcessor('signal-meter', SignalMeter);
       const c = centroidOf(s);
       centroidValue.textContent = centroidEnabled.checked ? c.toFixed(2) + ' Hz' : '—';
       const rawLegend = isPcm ? 'color −100…0 dBFS' : 'color −100…0 dBFS-equivalent';
-      labels(f, `${(s.rate / 2).toFixed(2)} Hz`, spectralMode === 'filtered' ? 'color 0.5× · 1× · 2× · 4× · 8×+' : rawLegend, `frequency ↑ · time → · ${frequencyMode} · ${spectralMode}`);
+      labels(f, `${(s.rate / 2).toFixed(2)} Hz`, spectralMode === 'filtered' ? 'color 0.5× · 1× · 2× · 4× · 8×+' : rawLegend, `frequency ↑ · time → · ${frequencyMode} · ${spectralMode === 'filtered' ? 'relative' : 'raw'}`);
     }
   }
   const MODULATION_PALETTES = {
@@ -1142,7 +1143,7 @@ registerProcessor('signal-meter', SignalMeter);
     ctx.textAlign = 'right';
     ctx.fillText(`steady/current │ modulation ${meta.minModulation.toFixed(2)}–${meta.maxModulation.toFixed(2)} Hz`, f.w - 10, 14);
     ctx.textAlign = 'left';
-    ctx.fillText(`frequency ↑ · modulation frequency → · ${frequencyMode} · ${spectralMode}`, 10, f.h - 8);
+    ctx.fillText(`frequency ↑ · modulation frequency → · ${frequencyMode} · ${spectralMode === 'filtered' ? 'relative' : 'raw'}`, 10, f.h - 8);
     shown.textContent = `${modulation.frequencyBins}×${modulation.modulationBins + 1} · ${meta.historySeconds.toFixed(1)} s history`;
     psdStats.textContent = `FFT ${s.n}/${s.selected} · Welch ${s.segmentCount} · Δmod ${meta.modulationResolution.toFixed(3)} Hz · ${frameRate.toFixed(1)} spectra/s`;
   }
@@ -1164,7 +1165,7 @@ registerProcessor('signal-meter', SignalMeter);
       lastSpectrum = s;
       if (s) {
         spectralColor.textContent = Number.isFinite(s.slope.alpha) ? `${s.slope.color} · α ${s.slope.alpha.toFixed(2)} · R² ${s.slope.r2.toFixed(2)}` : 'insufficient data';
-        psdStats.textContent = `${s.segmentCount} segments · ${bandAverage.checked ? 'banded' : 'FFT bins'} · ${spectralMode}`;
+        psdStats.textContent = `${s.segmentCount} segments · ${bandAverage.checked ? 'banded' : 'FFT bins'} · ${spectralMode === 'filtered' ? 'relative' : 'raw'}`;
       }
       if (view === 'spectrum') drawSpectrum(s);else if (view === 'spectrogram') drawSpectrogram(s);else drawModulation(s);
     }

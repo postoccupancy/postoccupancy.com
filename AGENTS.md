@@ -67,6 +67,8 @@ Historical deployment context: removing `docs/` from `b2b-dashboard-demo/.vercel
 - Global aggregation uses the visualizer's exact native/4/10/20/50/100/250/500/1000 ms rolling-average model. Signals presents those stops as native or equivalent hertz rounded to one decimal place.
 - `src/lib/visualizer/controls.ts` is the shared source for stops, labels, and rolling aggregation. Dashboard spectral views reuse `spectral-analysis.js` and `modulation-analysis.js`.
 - `SampleRing` retains up to 120 seconds while keeping its 25,000-sample cap so the 60-second view plus presentation delay remains available at current sensor rates.
+- FFT size, Welch segments, bands, smoothing, centroid, frequency scale, spectrum mode, and color palette are global under Settings → Signals and apply to both Signals charts and the dedicated visualizer. Preserve the original defaults except spectrum mode now defaults to the existing filtered calculation and is labeled `relative` in the interface.
+- Validation for this phase: lint, type checking, and production build passed. The focused Signals/visualizer suite passed all nine tests. The full browser run passed 23 tests before the final pre-existing Voices timing test timed out; that test passed immediately when rerun alone.
 
 ## Navigation and layout decisions
 
@@ -178,7 +180,7 @@ Future work already discussed, not yet implemented:
 - Electric Sea’s View links now navigate here within the site, preserving the shared WebSocket.
 - `src/components/visualizer/spectral-visualizer.tsx` owns selection/URL state inside Suspense; `visualizer-surface.tsx` isolates the original imperative controls and canvas under React. `visualizer.module.css` scopes the inspector’s dark styling. This is a deliberate local CSS exception to the site’s otherwise mostly MUI `sx` styling.
 - `src/lib/visualizer/engine.js` ports the original rendering, chunk ring, PCM/IMA ADPCM decoding, and Web Audio logic. `spectral-analysis.js` and `modulation-analysis.js` reuse the original algorithms as ES modules. Keep those routines aligned with the source rather than replacing them with approximate charts.
-- All four views are present: waveform, spectrum, spectrogram, modulation. Preserve aggregation, buffer/gain, time window, FFT/Welch, bands, frequency scaling, raw/filtered mode, centroid, smoothing/palette, cursor, and diagnostic controls.
+- All four views are present: waveform, spectrum, spectrogram, modulation. Preserve aggregation, buffer/gain, time window, cursor, and diagnostic controls locally. FFT/Welch, bands, frequency scaling, raw/relative mode, centroid, smoothing, and palette are shared through Settings → Signals.
 - `src/lib/visualizer/connection.ts` filters the selected signal and owns PCM/analysis subscriptions. Selecting PCM or derived bass/mid/high/centroid enables the corresponding source on the Pi, matching the original. Local playback requires Start audio. Unmount/selection changes unsubscribe and release audio, scheduled sources, animation, observers, and handlers without disabling the shared source.
 - `RouterClient.devices` provides bounded discovery metadata. `signal-device.ts` maps scalar and MIDI event identities/values. No old MIDI events are replayed for discovery.
 - ESAU binary frames lack a device ID. The shared client tracks ordered subscription acknowledgments to reject data from a previous selection, including rapid switches. Only one PCM selection may consume that connection unless the server protocol gains frame identity; do not independently subscribe multiple binary consumers.

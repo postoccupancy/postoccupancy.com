@@ -37,13 +37,28 @@ test('selects discovered signals, plots all views, and keeps query history on on
   sockets[0].send(batch(temperature));
   await expect(page.locator('[data-viz=sourceStats]')).toContainText('200.0 Hz');
   await expect(page.locator('[data-viz=shown]')).not.toHaveText('0');
+  await expect(page.getByRole('main').getByRole('slider', { name: /FFT/ })).toHaveCount(0);
+  await expect(page.getByRole('main').getByRole('checkbox', { name: 'Centroid' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Signals', exact: true }).click();
+  await expect(page.getByRole('slider', { name: 'FFT', exact: true })).toHaveValue('11');
+  await expect(page.getByRole('slider', { name: 'Welch', exact: true })).toHaveValue('2');
+  await expect(page.getByRole('checkbox', { name: 'Bands', exact: true })).toBeChecked();
+  await expect(page.getByRole('checkbox', { name: 'Smooth', exact: true })).toBeChecked();
+  await expect(page.getByRole('checkbox', { name: 'Centroid', exact: true })).not.toBeChecked();
+  await expect(page.getByRole('button', { name: 'Frequency: log', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Spectrum: relative', exact: true })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Color palette', exact: true })).toContainText('viridis');
+  await page.getByRole('checkbox', { name: 'Centroid', exact: true }).check();
+  await page.getByRole('combobox', { name: 'Color palette', exact: true }).click();
+  await page.getByRole('option', { name: 'magma', exact: true }).click();
+  await page.getByRole('button', { name: 'Close settings' }).click();
+  sockets[0].send(batch(temperature, 110_000_000, 2048));
   for (const name of ['spectrum', 'spectrogram', 'modulation', 'waveform']) {
     const button = page.getByRole('button', { name, exact: true });
     await button.click(); await expect(button).toHaveAttribute('aria-pressed', 'true');
     if (name === 'spectrum') {
-      await expect(page.getByRole('slider', { name: /FFT/ })).toBeVisible();
-      await expect(page.locator('[data-viz=psdStats]')).toContainText('segments');
-      await page.getByRole('checkbox', { name: 'centroid', exact: true }).check();
+      await expect(page.locator('[data-viz=psdStats]')).toContainText('relative');
       await expect(page.locator('[data-viz=centroidValue]')).toContainText('Hz');
       // Confirm plotted pixels, not just changing text labels.
       await expect.poll(() => page.locator('canvas').evaluate((canvas: HTMLCanvasElement) => {
@@ -52,9 +67,7 @@ test('selects discovered signals, plots all views, and keeps query history on on
         return count;
       })).toBeGreaterThan(10);
     }
-    if (name === 'modulation') await page.getByRole('combobox', { name: 'palette' }).selectOption('magma');
   }
-  await expect(page.getByRole('slider', { name: /FFT/ })).toBeHidden();
   await selector.selectOption(humidity);
   await expect(page).toHaveURL(new RegExp('device=osc%2Findoor-sky%2Fhumidity'));
   await expect(page.locator('[data-viz=shown]')).toHaveText('0');

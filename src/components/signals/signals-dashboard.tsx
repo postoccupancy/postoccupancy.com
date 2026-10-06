@@ -20,7 +20,7 @@ const nodeLabel = (node: string) => node.split('-').map((part) => part.charAt(0)
 
 export function SignalsDashboard() {
   const router = useSignalRouter();
-  const { presentationDelay } = useSettings();
+  const { presentationDelay, signalAnalysis } = useSettings();
   const [visualization, setVisualization] = useState<SignalVisualization>('waveform');
   const [windowIndex, setWindowIndex] = useState(13);
   const [aggregationIndex, setAggregationIndex] = useState(0);
@@ -86,7 +86,7 @@ export function SignalsDashboard() {
                 </Stack>
                 <Typography component="output" aria-live="off" variant="body2" sx={{ fontVariantNumeric: 'tabular-nums', color: stale ? 'text.secondary' : 'text.primary' }}>{value}{stale && latest ? ' · stale' : ''}</Typography>
               </Stack>
-              <SignalPlot channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} color={colors[channel.param] || '#9bc9d8'} scale={scale} decimals={decimals} visualization={visualization} windowSeconds={windowSeconds} aggregationMs={aggregationMs} label={`${source} ${name}: ${value}${stale ? ', stale data' : ''}.`} />
+              <SignalPlot channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} color={colors[channel.param] || '#9bc9d8'} scale={scale} decimals={decimals} visualization={visualization} windowSeconds={windowSeconds} aggregationMs={aggregationMs} analysisSettings={signalAnalysis} label={`${source} ${name}: ${value}${stale ? ', stale data' : ''}.`} />
             </Box>
           );
         })}

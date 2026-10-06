@@ -2,9 +2,10 @@
 
 import { useEffect, useRef } from 'react';
 import Box from '@mui/material/Box';
+import type { SignalAnalysisSettings } from '@/components/settings/settings-provider';
 import type { Channel, NodeClock } from '@/lib/signals/router-client';
 import { aggregateValues } from '@/lib/visualizer/controls';
-import { logBandAverage, welchPsd } from '@/lib/visualizer/spectral-analysis';
+import { filterBackground, logBandAverage, spectrumPoints, welchPsd } from '@/lib/visualizer/spectral-analysis';
 import { ModulationAnalysis } from '@/lib/visualizer/modulation-analysis';
 
 export type SignalVisualization = 'waveform' | 'spectrum' | 'spectrogram' | 'modulation';
@@ -12,6 +13,7 @@ export type SignalVisualization = 'waveform' | 'spectrum' | 'spectrogram' | 'mod
 interface SpectrumPoint { frequency: number; power: number }
 interface SpectrumData {
   points: SpectrumPoint[];
+  rawPoints: SpectrumPoint[];
   referencePsd: number;
   resolution: number;
   segmentLength: number;
@@ -21,18 +23,26 @@ interface SpectrumData {
 
 const clamp = (value: number) => Math.max(0, Math.min(1, value));
 
-function valueAtFrequency(frequency: number, points: SpectrumPoint[]) {
+function valueAtFrequency(frequency: number, points: SpectrumPoint[], smooth = true) {
   let high = 1;
   while (high < points.length && points[high].frequency < frequency) high++;
   if (high >= points.length) return points.at(-1)?.power ?? 0;
   const low = Math.max(0, high - 1);
   const span = points[high].frequency - points[low].frequency;
   const mix = span ? (frequency - points[low].frequency) / span : 0;
-  return points[low].power * (1 - mix) + points[high].power * mix;
+  return smooth ? points[low].power * (1 - mix) + points[high].power * mix : mix < .5 ? points[low].power : points[high].power;
 }
 
-function viridis(value: number) {
-  const stops: [number, number[]][] = [[0, [68, 1, 84]], [.25, [59, 82, 139]], [.5, [33, 145, 140]], [.75, [92, 200, 99]], [1, [253, 231, 37]]];
+const PALETTES: Record<SignalAnalysisSettings['palette'], [number, number[]][]> = {
+  viridis: [[0, [68, 1, 84]], [.25, [59, 82, 139]], [.5, [33, 145, 140]], [.75, [92, 200, 99]], [1, [253, 231, 37]]],
+  plasma: [[0, [13, 8, 135]], [.25, [126, 3, 168]], [.5, [203, 70, 121]], [.75, [248, 148, 65]], [1, [240, 249, 33]]],
+  inferno: [[0, [0, 0, 4]], [.25, [85, 15, 109]], [.5, [186, 54, 85]], [.75, [249, 140, 10]], [1, [252, 255, 164]]],
+  magma: [[0, [0, 0, 4]], [.25, [79, 18, 123]], [.5, [181, 54, 122]], [.75, [251, 135, 97]], [1, [252, 253, 191]]],
+  cividis: [[0, [0, 32, 77]], [.25, [50, 72, 105]], [.5, [101, 111, 110]], [.75, [158, 154, 99]], [1, [255, 233, 69]]],
+};
+
+function paletteRgb(value: number, palette: SignalAnalysisSettings['palette']) {
+  const stops = PALETTES[palette];
   for (let index = 1; index < stops.length; index++) {
     if (value <= stops[index][0]) {
       const before = stops[index - 1];
@@ -44,7 +54,7 @@ function viridis(value: number) {
   return stops.at(-1)![1];
 }
 
-export function SignalPlot({ channel, clock, delay, color, scale, decimals, label, visualization, windowSeconds, aggregationMs }: {
+export function SignalPlot({ channel, clock, delay, color, scale, decimals, label, visualization, windowSeconds, aggregationMs, analysisSettings }: {
   channel: Channel;
   clock?: NodeClock;
   delay: number;
@@ -55,6 +65,7 @@ export function SignalPlot({ channel, clock, delay, color, scale, decimals, labe
   visualization: SignalVisualization;
   windowSeconds: number;
   aggregationMs: number;
+  analysisSettings: SignalAnalysisSettings;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -131,9 +142,10 @@ export function SignalPlot({ channel, clock, delay, color, scale, decimals, labe
 
     function analyze(data: ReturnType<typeof series>): SpectrumData | null {
       if (!(data.rate > 0) || data.values.length < 8) return null;
+      const selectedLength = 2 ** analysisSettings.fftPower;
       let segmentLength = 8;
-      while (segmentLength * 2 <= 2048 && segmentLength * 2 <= data.values.length) segmentLength *= 2;
-      const spectrum = welchPsd(data.values, data.rate, segmentLength, 16);
+      while (segmentLength * 2 <= selectedLength && segmentLength * 2 <= data.values.length) segmentLength *= 2;
+      const spectrum = welchPsd(data.values, data.rate, segmentLength, [1, 2, 4, 8, 16][analysisSettings.welchIndex]);
       if (!spectrum) return null;
       let mean = 0;
       for (const value of data.values) mean += value;
@@ -141,7 +153,9 @@ export function SignalPlot({ channel, clock, delay, color, scale, decimals, labe
       let peak = 0;
       for (const value of data.values) peak = Math.max(peak, Math.abs(value - mean));
       const referencePsd = spectrum.fullScaleSinePsd * Math.max(peak, Number.EPSILON) ** 2;
-      return { ...spectrum, points: logBandAverage(spectrum), referencePsd };
+      const rawPoints = analysisSettings.bands ? logBandAverage(spectrum) : spectrumPoints(spectrum);
+      const points = analysisSettings.spectrumMode === 'relative' ? filterBackground(rawPoints) : rawPoints;
+      return { ...spectrum, rawPoints, points, referencePsd };
     }
 
     function drawWaveform(data: ReturnType<typeof series>) {
@@ -178,14 +192,33 @@ export function SignalPlot({ channel, clock, delay, color, scale, decimals, labe
       text(size, `max ${high.toFixed(decimals)}`, `${windowSeconds} s · ${data.values.length} samples`, `min ${low.toFixed(decimals)} · peak-to-peak ${(high - low).toFixed(decimals)}`);
     }
 
-    function logX(frequency: number, points: SpectrumPoint[]) {
+    function frequencyX(frequency: number, points: SpectrumPoint[]) {
       const first = points[0].frequency;
       const last = points.at(-1)!.frequency;
+      const linear = (frequency - first) / (last - first);
+      if (analysisSettings.frequencyScale === 'expanded') return Math.sqrt(linear);
+      if (analysisSettings.frequencyScale === 'linear') return linear;
       return Math.log(frequency / first) / Math.log(last / first);
     }
 
+    function frequencyAt(position: number, points: SpectrumPoint[]) {
+      const first = points[0].frequency;
+      const last = points.at(-1)!.frequency;
+      if (analysisSettings.frequencyScale === 'expanded') return first + position ** 2 * (last - first);
+      if (analysisSettings.frequencyScale === 'linear') return first + position * (last - first);
+      return first * (last / first) ** position;
+    }
+
     function level(power: number, spectrum: SpectrumData) {
+      if (analysisSettings.spectrumMode === 'relative') return clamp((Math.log2(Math.max(power, Number.MIN_VALUE)) + 1) / 4);
       return clamp((10 * Math.log10(Math.max(power, Number.MIN_VALUE) / spectrum.referencePsd) + 100) / 100);
+    }
+
+    function centroid(spectrum: SpectrumData) {
+      let weighted = 0;
+      let total = 0;
+      for (const point of spectrum.rawPoints) { weighted += point.frequency * point.power; total += point.power; }
+      return total > 0 ? weighted / total : 0;
     }
 
     function drawSpectrum(spectrum: SpectrumData | null) {
@@ -195,11 +228,20 @@ export function SignalPlot({ channel, clock, delay, color, scale, decimals, labe
       context!.lineWidth = 1.5 * size.ratio;
       context!.beginPath();
       spectrum.points.forEach((point, index) => {
-        const x = logX(point.frequency, spectrum.points) * size.width;
+        const x = frequencyX(point.frequency, spectrum.points) * size.width;
         const y = size.height - level(point.power, spectrum) * size.height;
         if (index) context!.lineTo(x, y); else context!.moveTo(x, y);
       });
       context!.stroke();
+      if (analysisSettings.centroid) {
+        const value = centroid(spectrum);
+        const x = frequencyX(value, spectrum.points) * size.width;
+        context!.strokeStyle = '#263238';
+        context!.beginPath();
+        context!.moveTo(x, 0);
+        context!.lineTo(x, size.height);
+        context!.stroke();
+      }
       text(size, `${spectrum.resolution.toFixed(3)} Hz/bin`, `${windowSeconds} s analysis`, `frequency → · ${(spectrum.sampleRate / 2).toFixed(1)} Hz Nyquist · Welch ${spectrum.segmentCount}`);
     }
 
@@ -215,8 +257,8 @@ export function SignalPlot({ channel, clock, delay, color, scale, decimals, labe
         for (let row = 0; row < rows; row++) {
           const position = 1 - row / Math.max(1, rows - 1);
           const points = entry.spectrum.points;
-          const frequency = points[0].frequency * (points.at(-1)!.frequency / points[0].frequency) ** position;
-          const hue = 240 - level(valueAtFrequency(frequency, points), entry.spectrum) * 190;
+          const frequency = frequencyAt(position, points);
+          const hue = 240 - level(valueAtFrequency(frequency, points, analysisSettings.smooth), entry.spectrum) * 190;
           context!.fillStyle = `hsl(${hue} 90% 38%)`;
           context!.fillRect(x - width, row / rows * size.height, width + size.ratio, size.height / rows + size.ratio);
         }
@@ -233,7 +275,7 @@ export function SignalPlot({ channel, clock, delay, color, scale, decimals, labe
       const image = context!.createImageData(sourceWidth, sourceHeight);
       for (let y = 0; y < sourceHeight; y++) {
         for (let x = 0; x < sourceWidth; x++) {
-          const rgb = viridis(modulation.display[sourceHeight - y - 1][x]);
+          const rgb = paletteRgb(modulation.display[sourceHeight - y - 1][x], analysisSettings.palette);
           const offset = (y * sourceWidth + x) * 4;
           image.data[offset] = rgb[0]; image.data[offset + 1] = rgb[1]; image.data[offset + 2] = rgb[2]; image.data[offset + 3] = 255;
         }
@@ -242,7 +284,7 @@ export function SignalPlot({ channel, clock, delay, color, scale, decimals, labe
         modulationField.width = sourceWidth; modulationField.height = sourceHeight;
       }
       modulationContext.putImageData(image, 0, 0);
-      context!.imageSmoothingEnabled = true;
+      context!.imageSmoothingEnabled = analysisSettings.smooth;
       context!.drawImage(modulationField, 0, 0, size.width, size.height);
       text(size, `${metadata.minFrequency.toFixed(2)}–${metadata.maxFrequency.toFixed(1)} Hz`, `${windowSeconds} s analysis`, `steady/current · modulation ${metadata.minModulation.toFixed(2)}–${metadata.maxModulation.toFixed(2)} Hz`);
     }
@@ -264,7 +306,7 @@ export function SignalPlot({ channel, clock, delay, color, scale, decimals, labe
           spectrogram.push({ time: latest, spectrum: currentSpectrum });
           while (spectrogram.length && latest - spectrogram[0].time > 60e6) spectrogram.shift();
           const analysisRate = Math.min(25, Math.max(2, (data.rate || 8) / 4));
-          modulation.ingest(currentSpectrum, latest, analysisRate, 'raw');
+          modulation.ingest(currentSpectrum, latest, analysisRate, analysisSettings.spectrumMode === 'relative' ? 'filtered' : 'raw');
         }
       }
       if (visualization === 'spectrum') drawSpectrum(currentSpectrum);
@@ -274,7 +316,7 @@ export function SignalPlot({ channel, clock, delay, color, scale, decimals, labe
 
     animationFrame = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(animationFrame);
-  }, [aggregationMs, channel, clock, color, decimals, delay, scale, visualization, windowSeconds]);
+  }, [aggregationMs, analysisSettings, channel, clock, color, decimals, delay, scale, visualization, windowSeconds]);
 
   return <Box component="canvas" ref={canvasRef} role="img" aria-label={`${label} ${visualization} view · ${windowSeconds} second window`} sx={{ display: 'block', width: '100%', height: 170, bgcolor: 'whitesmoke' }} />;
 }
