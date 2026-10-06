@@ -23,3 +23,31 @@ export function aggregateValues(values: ArrayLike<number>, rate: number, aggrega
   }
   return output;
 }
+
+// Time-bucket dashboard samples so a requested resolution represents one value
+// per occupied interval. Brief packet gaps inside an interval are absorbed by
+// that interval instead of remaining as holes between rolling-average points.
+export function aggregateSeries(times: ArrayLike<number>, values: ArrayLike<number>, aggregationMs: number) {
+  if (!aggregationMs) return { times: Array.from(times), values: Float64Array.from(values) };
+  const bucketUs = aggregationMs * 1000;
+  const outputTimes: number[] = [];
+  const outputValues: number[] = [];
+  let bucket = -1;
+  let sum = 0;
+  let count = 0;
+  for (let index = 0; index < values.length; index++) {
+    const nextBucket = Math.floor(times[index] / bucketUs);
+    if (bucket !== -1 && nextBucket !== bucket) {
+      outputTimes.push((bucket + 0.5) * bucketUs);
+      outputValues.push(sum / count);
+      sum = 0; count = 0;
+    }
+    bucket = nextBucket;
+    sum += values[index]; count++;
+  }
+  if (count) {
+    outputTimes.push((bucket + 0.5) * bucketUs);
+    outputValues.push(sum / count);
+  }
+  return { times: outputTimes, values: Float64Array.from(outputValues) };
+}

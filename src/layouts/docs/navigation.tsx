@@ -9,12 +9,13 @@ import List from '@mui/material/List';
 import ListItemButton from '@mui/material/ListItemButton';
 import ExpandMore from '@mui/icons-material/ExpandMore';
 import ChevronRight from '@mui/icons-material/ChevronRight';
-import { groups, type NavigationGroup, type SitePage } from '@/content/site';
+import { groups, topLevelPages, type NavigationGroup, type SitePage } from '@/content/site';
 
-function PageLink({ page, pathname, onNavigate }: {
+function PageLink({ page, pathname, onNavigate, nested = true }: {
   page: SitePage;
   pathname: string;
   onNavigate: () => void;
+  nested?: boolean;
 }) {
   const active = pathname === page.href;
   return (
@@ -27,7 +28,7 @@ function PageLink({ page, pathname, onNavigate }: {
         aria-current={active ? 'page' : undefined}
         sx={{
           borderRadius: 1, minHeight: 36, py: 0.75, px: 1.5,
-          pl: 2.75,
+          pl: nested ? 2.75 : 1.5,
           fontSize: 13, lineHeight: 1.6, fontWeight: active ? 600 : 400,
           color: active ? 'primary.main' : 'text.secondary',
           '&.Mui-selected': { bgcolor: 'rgba(54, 91, 76, 0.07)' },
@@ -79,6 +80,7 @@ export function DocsNavigation({ onNavigate }: { onNavigate: () => void }) {
   return (
     <Box component="nav" aria-label="Main navigation" sx={{ px: 1.5, pb: 3 }}>
       <List disablePadding>
+        {topLevelPages.map((page) => <PageLink key={page.href} page={page} pathname={pathname} onNavigate={onNavigate} nested={false} />)}
         {groups.map((group) => <Section key={group.id} group={group} pathname={pathname} onNavigate={onNavigate} />)}
       </List>
     </Box>

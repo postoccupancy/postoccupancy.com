@@ -1,6 +1,6 @@
 import { expect, test, type WebSocketRoute } from '@playwright/test';
 import { welchPsd, spectrumPoints } from '../src/lib/visualizer/spectral-analysis';
-import { aggregateValues, formatAggregation, VISUALIZER_AGGREGATION_MS, VISUALIZER_WINDOWS_SECONDS } from '../src/lib/visualizer/controls';
+import { aggregateSeries, aggregateValues, formatAggregation, VISUALIZER_AGGREGATION_MS, VISUALIZER_WINDOWS_SECONDS } from '../src/lib/visualizer/controls';
 
 const path = '/interfaces/spectral-visualizer';
 const temperature = 'osc/electric-sky/temperature';
@@ -151,7 +151,7 @@ test('reused Welch analysis locates a known tone and preserves its power', () =>
   expect(power).toBeCloseTo(0.5, 2);
 });
 
-test('dashboard and visualizer share window stops and rolling aggregation', () => {
+test('dashboard and visualizer share stops while dashboard aggregation uses time buckets', () => {
   expect(VISUALIZER_WINDOWS_SECONDS).toEqual([.001, .002, .005, .01, .02, .043, .05, .1, .25, .5, 1, 2, 5, 10, 30, 60]);
   expect(VISUALIZER_AGGREGATION_MS).toEqual([0, 4, 10, 20, 50, 100, 250, 500, 1000]);
   expect(formatAggregation(0)).toBe('native');
@@ -159,6 +159,9 @@ test('dashboard and visualizer share window stops and rolling aggregation', () =
   expect(formatAggregation(1000)).toBe('1.0 Hz');
   expect([...aggregateValues([1, 3, 5, 7], 100, 20)]).toEqual([1, 2, 4, 6]);
   expect([...aggregateValues([1, 3, 5], 100, 0)]).toEqual([1, 3, 5]);
+  const bucketed = aggregateSeries([0, 100_000, 900_000, 1_100_000], [1, 3, 5, 9], 1000);
+  expect(bucketed.times).toEqual([500_000, 1_500_000]);
+  expect([...bucketed.values]).toEqual([3, 9]);
 });
 
 test('starts audio only on request and closes processing when the signal changes', async ({ page }) => {

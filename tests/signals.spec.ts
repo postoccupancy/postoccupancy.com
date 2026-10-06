@@ -16,6 +16,8 @@ test('discovers channels, converts power, and shares one socket across routes', 
   page.on('pageerror', (error) => errors.push(error.message));
   await page.routeWebSocket('wss://rf.postoccupancy.com', (socket) => {
     sockets.push(socket);
+    socket.send(batch('electric-sky', 'rms', 'dbfs', -40));
+    socket.send(batch('indoor-sky', 'rms', 'dbfs', -42));
     socket.send(batch('electric-sky', 'temperature', 'celsius', 23.5));
     socket.send(batch('electric-sky', 'power', 'mw', 1250));
     socket.send(batch('electric-sky', 'light-level', 'lux', 120));
@@ -32,11 +34,9 @@ test('discovers channels, converts power, and shares one socket across routes', 
   const temperatureCard = page.getByRole('region', { name: 'Electric Sky Temperature', exact: true });
   await temperatureCard.getByRole('button', { name: 'Open settings for osc/electric-sky/temperature' }).click();
   await expect(temperatureCard.getByText('osc/electric-sky/temperature', { exact: true })).toBeVisible();
-  await expect(temperatureCard.getByRole('link', { name: 'Open Electric Sky node' })).toHaveAttribute('href', 'https://rf.postoccupancy.com/electric-sky/');
-  await temperatureCard.getByRole('spinbutton', { name: 'MIDI channel' }).fill('3');
-  await temperatureCard.getByRole('spinbutton', { name: 'MIDI channel' }).press('Enter');
-  await temperatureCard.getByRole('spinbutton', { name: 'CC' }).fill('21');
-  await temperatureCard.getByRole('spinbutton', { name: 'CC' }).press('Enter');
+  await expect(temperatureCard.getByRole('link')).toHaveCount(0);
+  await temperatureCard.getByRole('combobox', { name: 'MIDI channel' }).selectOption('3');
+  await temperatureCard.getByRole('combobox', { name: 'CC' }).selectOption('21');
   await temperatureCard.getByRole('spinbutton', { name: 'MIN' }).fill('10');
   await temperatureCard.getByRole('spinbutton', { name: 'MIN' }).press('Enter');
   await temperatureCard.getByRole('spinbutton', { name: 'MAX' }).fill('35');
@@ -51,7 +51,21 @@ test('discovers channels, converts power, and shares one socket across routes', 
   await temperatureCard.getByRole('button', { name: 'Close settings for osc/electric-sky/temperature' }).click();
   await expect(temperatureCard).toContainText('MIDI Ch 3 · CC 21 · Min 10 · Max 35 · Gain 8×');
   const charts = page.getByRole('img', { name: /view · 10 second window/ });
-  await expect(charts).toHaveCount(4);
+  await expect(charts).toHaveCount(6);
+  const cards = page.locator('section[aria-label]');
+  await expect(cards.nth(0)).toHaveAttribute('aria-label', 'Electric Sky Microphone RMS');
+  await expect(cards.nth(1)).toHaveAttribute('aria-label', 'Indoor Sky Microphone RMS');
+  const nodeFilter = page.getByRole('combobox', { name: 'Node', exact: true });
+  const typeFilter = page.getByRole('combobox', { name: 'Sensor type', exact: true });
+  await expect(nodeFilter).toContainText('All nodes');
+  await expect(typeFilter).toContainText('All sensor types');
+  await nodeFilter.click();
+  await page.getByRole('option', { name: /Indoor Sky/ }).click();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('region', { name: 'Indoor Sky Humidity', exact: true })).toHaveCount(0);
+  await nodeFilter.click();
+  await page.getByRole('option', { name: /Indoor Sky/ }).click();
+  await page.keyboard.press('Escape');
   await expect(charts.first()).toHaveAccessibleName(/waveform view/);
   for (const view of ['spectrum', 'spectrogram', 'modulation', 'waveform']) {
     await page.getByRole('button', { name: view, exact: true }).click();

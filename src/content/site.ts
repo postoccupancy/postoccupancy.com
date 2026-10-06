@@ -10,12 +10,11 @@ export interface NavigationGroup {
   items: SitePage[];
 }
 
+export const topLevelPages: SitePage[] = [
+  { title: 'Signals', href: '/', description: 'Live environmental signals from the Electric Sky and Indoor Sky sensor nodes.' },
+];
+
 export const groups: NavigationGroup[] = [
-  {
-    title: 'Nodes', id: 'nodes', items: [
-      { title: 'Signals', href: '/', description: 'Live environmental signals from the Electric Sky and Indoor Sky sensor nodes.' },
-    ],
-  },
   {
     title: 'Hubs', id: 'hubs', items: [
       { title: 'Electric Sea', href: '/hubs/electric-sea', description: 'An interface to the live signal router connecting environmental signals across Post Occupancy.' },
@@ -44,7 +43,7 @@ export const groups: NavigationGroup[] = [
   },
 ];
 
-export const pages = groups.flatMap((group) => group.items);
+export const pages = [...topLevelPages, ...groups.flatMap((group) => group.items)];
 
 export function getPage(href: string): SitePage {
   const page = pages.find((page) => page.href === href);

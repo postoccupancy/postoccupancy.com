@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 
 export default function Page() {
   return (
-    <DocsPage title={page.title} section="Nodes" mode="dashboard">
+    <DocsPage title={page.title} mode="dashboard">
       <SignalsDashboard />
     </DocsPage>
   );

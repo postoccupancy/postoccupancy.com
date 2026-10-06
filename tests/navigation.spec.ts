@@ -16,7 +16,7 @@ test('all named routes render their title, breadcrumbs, and selected navigation'
     const nav = page.getByRole('navigation', { name: 'Main navigation' });
     const breadcrumb = page.getByRole('navigation', { name: 'Breadcrumb', exact: true });
     await expect(nav.getByRole('link', { name: entry.title, exact: true })).toHaveAttribute('aria-current', 'page');
-    if (entry.href === '/instruments/processing-sketches') {
+    if (entry.href === '/' || entry.href === '/instruments/processing-sketches') {
       await expect(breadcrumb).toHaveCount(0);
       continue;
     }
@@ -27,24 +27,26 @@ test('all named routes render their title, breadcrumbs, and selected navigation'
   expect(errors).toEqual([]);
 });
 
-test('sections collapse and active sections reopen on history navigation', async ({ page }) => {
+test('sections collapse independently while Signals remains top level', async ({ page }) => {
   await page.goto('/');
   const nav = page.getByRole('navigation', { name: 'Main navigation' });
-  const nodes = nav.getByRole('button', { name: 'Nodes', exact: true });
-  await nodes.click();
-  await expect(nodes).toHaveAttribute('aria-expanded', 'false');
-  await expect(nav.getByRole('link', { name: 'Signals' })).not.toBeVisible();
+  const hubs = nav.getByRole('button', { name: 'Hubs', exact: true });
+  await hubs.click();
+  await expect(hubs).toHaveAttribute('aria-expanded', 'false');
+  await expect(nav.getByRole('link', { name: 'Electric Sea' })).not.toBeVisible();
+  await expect(nav.getByRole('link', { name: 'Signals' })).toBeVisible();
+  await hubs.click();
+  await expect(hubs).toHaveAttribute('aria-expanded', 'true');
+  await nav.getByRole('link', { name: 'Electric Sea', exact: true }).click();
+  await expect(page).toHaveURL('/hubs/electric-sea');
   await nav.getByRole('link', { name: 'Notes', exact: true }).click();
   await expect(page).toHaveURL('/lab/notes');
   await expect(page.getByRole('navigation', { name: 'Breadcrumb', exact: true })).toHaveText('Lab/Notes');
-  await page.goBack();
-  await expect(nodes).toHaveAttribute('aria-expanded', 'true');
-  await expect(nav.getByRole('link', { name: 'Signals' })).toBeVisible();
   await page.getByRole('link', { name: 'Post Occupancy', exact: true }).click();
   await expect(page).toHaveURL('/');
   await expect(page.getByRole('heading', { level: 1, name: 'Signals', exact: true })).toBeVisible();
   await expect(page).toHaveTitle('Signals | Post Occupancy');
-  await expect(page.getByRole('navigation', { name: 'Breadcrumb', exact: true })).toHaveText('Nodes/Signals');
+  await expect(page.getByRole('navigation', { name: 'Breadcrumb', exact: true })).toHaveCount(0);
   await expect(nav.getByRole('link', { name: 'Signals', exact: true })).toHaveAttribute('aria-current', 'page');
 });
 

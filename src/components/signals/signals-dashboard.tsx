@@ -2,6 +2,12 @@
 
 import { useState } from 'react';
 import Box from '@mui/material/Box';
+import Checkbox from '@mui/material/Checkbox';
+import FormControl from '@mui/material/FormControl';
+import InputLabel from '@mui/material/InputLabel';
+import ListItemText from '@mui/material/ListItemText';
+import MenuItem from '@mui/material/MenuItem';
+import Select from '@mui/material/Select';
 import Slider from '@mui/material/Slider';
 import Stack from '@mui/material/Stack';
 import ToggleButton from '@mui/material/ToggleButton';
@@ -18,6 +24,20 @@ const labels: Record<string, string> = { temperature: 'Temperature', humidity: '
 const colors: Record<string, string> = { temperature: '#66ddff', humidity: '#75ee99', pressure: '#dd99ff', power: '#ffcc66', 'solar-power': '#ff9f43', rms: '#ff6688' };
 const units: Record<string, string> = { celsius: '°C', percent: '%', hpa: 'hPa', dbfs: 'dBFS', volts: 'V', ma: 'mA', mw: 'W' };
 const nodeLabel = (node: string) => node.split('-').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
+const sensorTypes = ['Audio', 'Weather', 'Power'] as const;
+type SensorType = typeof sensorTypes[number];
+const nodes = ['electric-sky', 'indoor-sky'] as const;
+const sensorOrder: Record<SensorType, string[]> = {
+  Audio: ['rms', 'bass', 'mid', 'high', 'centroid'],
+  Weather: ['temperature', 'humidity', 'absolute-humidity', 'pressure'],
+  Power: ['power', 'solar-power', 'solar-voltage', 'solar-current'],
+};
+function sensorType(param: string): SensorType {
+  const normalized = param.toLowerCase();
+  if (sensorOrder.Power.includes(normalized) || normalized.includes('power') || normalized.includes('solar')) return 'Power';
+  if (sensorOrder.Audio.includes(normalized) || normalized.includes('audio') || normalized.includes('pcm') || normalized.includes('frequency') || normalized.includes('band')) return 'Audio';
+  return 'Weather';
+}
 
 export function SignalsDashboard() {
   const router = useSignalRouter();
@@ -25,16 +45,21 @@ export function SignalsDashboard() {
   const [visualization, setVisualization] = useState<SignalVisualization>('waveform');
   const [windowIndex, setWindowIndex] = useState(13);
   const [aggregationIndex, setAggregationIndex] = useState(0);
+  const [selectedNodes, setSelectedNodes] = useState<string[]>([...nodes]);
+  const [selectedTypes, setSelectedTypes] = useState<SensorType[]>([...sensorTypes]);
   const windowSeconds = VISUALIZER_WINDOWS_SECONDS[windowIndex];
   const aggregationMs = VISUALIZER_AGGREGATION_MS[aggregationIndex];
   const channels = [...router.channels.values()];
   channels.sort((a, b) => {
-    const nodeOrder = a.node.localeCompare(b.node);
-    if (nodeOrder) return nodeOrder;
-    const order = Object.keys(labels);
-    const rank = (param: string) => order.includes(param) ? order.indexOf(param) : order.length;
-    return rank(a.param) - rank(b.param) || a.param.localeCompare(b.param);
+    const aType = sensorType(a.param); const bType = sensorType(b.param);
+    const typeOrder = sensorTypes.indexOf(aType) - sensorTypes.indexOf(bType);
+    if (typeOrder) return typeOrder;
+    const order = sensorOrder[aType];
+    const aRank = order.includes(a.param) ? order.indexOf(a.param) : order.length;
+    const bRank = order.includes(b.param) ? order.indexOf(b.param) : order.length;
+    return aRank - bRank || a.param.localeCompare(b.param) || a.node.localeCompare(b.node);
   });
+  const visibleChannels = channels.filter((channel) => selectedNodes.includes(channel.node) && selectedTypes.includes(sensorType(channel.param)));
   const now = router.now;
   const lastReceived = Math.max(0, ...channels.map((channel) => channel.receivedAt));
   const fresh = lastReceived > 0 && now - lastReceived < 5000;
@@ -50,6 +75,20 @@ export function SignalsDashboard() {
         <ToggleButtonGroup exclusive size="small" value={visualization} aria-label="Visualization type" onChange={(_, value: SignalVisualization | null) => { if (value) setVisualization(value); }} sx={{ alignSelf: 'flex-start', flexWrap: 'wrap' }}>
           {(['waveform', 'spectrum', 'spectrogram', 'modulation'] as const).map((view) => <ToggleButton key={view} value={view} aria-label={view}>{view}</ToggleButton>)}
         </ToggleButtonGroup>
+        <Stack direction="row" spacing={1.5} useFlexGap sx={{ flexWrap: 'wrap' }}>
+          <FormControl size="small" sx={{ minWidth: 180 }}>
+            <InputLabel id="signals-node-filter">Node</InputLabel>
+            <Select labelId="signals-node-filter" label="Node" multiple value={selectedNodes} renderValue={(selected) => selected.length === nodes.length ? 'All nodes' : selected.map(nodeLabel).join(', ')} onChange={(event) => setSelectedNodes(typeof event.target.value === 'string' ? event.target.value.split(',') : event.target.value)}>
+              {nodes.map((node) => <MenuItem key={node} value={node}><Checkbox checked={selectedNodes.includes(node)} /><ListItemText primary={nodeLabel(node)} /></MenuItem>)}
+            </Select>
+          </FormControl>
+          <FormControl size="small" sx={{ minWidth: 180 }}>
+            <InputLabel id="signals-type-filter">Sensor type</InputLabel>
+            <Select labelId="signals-type-filter" label="Sensor type" multiple value={selectedTypes} renderValue={(selected) => selected.length === sensorTypes.length ? 'All sensor types' : selected.join(', ')} onChange={(event) => setSelectedTypes((typeof event.target.value === 'string' ? event.target.value.split(',') : event.target.value) as SensorType[])}>
+              {sensorTypes.map((type) => <MenuItem key={type} value={type}><Checkbox checked={selectedTypes.includes(type)} /><ListItemText primary={type} /></MenuItem>)}
+            </Select>
+          </FormControl>
+        </Stack>
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: { xs: 2, md: 4 }, maxWidth: 900 }}>
           <Box>
             <Stack direction="row" sx={{ justifyContent: 'space-between' }}>
@@ -69,7 +108,7 @@ export function SignalsDashboard() {
       </Stack>
       {!channels.length && <Typography color="text.secondary">Waiting for signal channels. Plots appear as data arrives.</Typography>}
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {channels.map((channel) => {
+        {visibleChannels.map((channel) => {
           const name = labels[channel.param] || channel.param.replaceAll('-', ' ');
           const source = nodeLabel(channel.node);
           const unit = units[channel.unit.toLowerCase()] ?? channel.unit;

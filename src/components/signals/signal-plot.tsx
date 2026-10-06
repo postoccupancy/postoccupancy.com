@@ -4,7 +4,7 @@ import { useEffect, useRef } from 'react';
 import Box from '@mui/material/Box';
 import type { SignalAnalysisSettings } from '@/components/settings/settings-provider';
 import type { Channel, NodeClock } from '@/lib/signals/router-client';
-import { aggregateValues } from '@/lib/visualizer/controls';
+import { aggregateSeries } from '@/lib/visualizer/controls';
 import { filterBackground, logBandAverage, spectrumPoints, welchPsd } from '@/lib/visualizer/spectral-analysis';
 import { ModulationAnalysis } from '@/lib/visualizer/modulation-analysis';
 
@@ -75,6 +75,7 @@ export function SignalPlot({ channel, clock, delay, color, scale, decimals, labe
     if (!canvas || !context || !clock) return;
     let animationFrame = 0;
     let lastDraw = 0;
+    let lastAnalysisDraw = 0;
     let lastAnalysisTime = -1;
     let axisLow = Infinity;
     let axisHigh = -Infinity;
@@ -130,14 +131,15 @@ export function SignalPlot({ channel, clock, delay, color, scale, decimals, labe
 
     function series(end: number) {
       const start = end - windowSeconds * 1e6;
-      const lookback = aggregationMs * 1000;
+      const lookback = Math.max(aggregationMs * 1000, channel.sampleRate > 0 ? 1e6 / channel.sampleRate : 0);
       const times: number[] = [];
       const raw: number[] = [];
       channel.ring.visitRange(start - lookback, end, (sample) => { times.push(sample.t); raw.push(sample.v * scale); });
       const rate = channel.sampleRate || (times.length > 1 ? (times.length - 1) * 1e6 / (times.at(-1)! - times[0]) : 0);
-      const values = aggregateValues(raw, rate || 1, aggregationMs);
-      const first = times.findIndex((time) => time >= start);
-      return { start, rate, times: first < 0 ? [] : times.slice(first), values: first < 0 ? new Float64Array() : values.slice(first) };
+      const aggregated = aggregateSeries(times, raw, aggregationMs);
+      const first = aggregated.times.findIndex((time) => time >= start);
+      const from = first < 0 ? Math.max(0, aggregated.times.length - 1) : Math.max(0, first - 1);
+      return { start, rate: aggregationMs ? 1000 / aggregationMs : rate, times: aggregated.times.slice(from), values: aggregated.values.slice(from) };
     }
 
     function analyze(data: ReturnType<typeof series>): SpectrumData | null {
@@ -170,23 +172,31 @@ export function SignalPlot({ channel, clock, delay, color, scale, decimals, labe
       const bins = Math.max(1, Math.ceil(size.width / 2));
       const mins = new Float64Array(bins); mins.fill(Infinity);
       const maxs = new Float64Array(bins); maxs.fill(-Infinity);
+      const firstTimes = new Float64Array(bins); firstTimes.fill(Infinity);
       for (let index = 0; index < data.values.length; index++) {
         const bin = Math.min(bins - 1, Math.max(0, Math.floor((data.times[index] - data.start) / (windowSeconds * 1e6) * bins)));
         mins[bin] = Math.min(mins[bin], data.values[index]);
         maxs[bin] = Math.max(maxs[bin], data.values[index]);
+        firstTimes[bin] = Math.min(firstTimes[bin], data.times[index]);
       }
       context!.strokeStyle = color;
       context!.lineWidth = 2 * size.ratio;
       context!.beginPath();
-      let previous = -2;
+      let previousTime = -Infinity;
+      let drew = false;
+      const maxGap = aggregationMs ? aggregationMs * 1500 : data.rate > 0 ? 2.5e6 / data.rate : Infinity;
       for (let bin = 0; bin < bins; bin++) {
         if (mins[bin] === Infinity) continue;
         const x = (bin + .5) / bins * size.width;
         const y1 = size.height - (mins[bin] - axisLow) / (axisHigh - axisLow) * size.height;
         const y2 = size.height - (maxs[bin] - axisLow) / (axisHigh - axisLow) * size.height;
-        if (bin !== previous + 1) context!.moveTo(x, y1); else context!.lineTo(x, y1);
+        if (!drew || firstTimes[bin] - previousTime > maxGap) context!.moveTo(x, y1); else context!.lineTo(x, y1);
         context!.lineTo(x, y2 === y1 ? y2 + size.ratio : y2);
-        previous = bin;
+        previousTime = firstTimes[bin]; drew = true;
+      }
+      if (data.values.length === 1) {
+        const y = size.height - (data.values[0] - axisLow) / (axisHigh - axisLow) * size.height;
+        context!.moveTo(0, y); context!.lineTo(size.width, y);
       }
       context!.stroke();
       text(size, `max ${high.toFixed(decimals)}`, `${windowSeconds} s · ${data.values.length} samples`, `min ${low.toFixed(decimals)} · peak-to-peak ${(high - low).toFixed(decimals)}`);
@@ -294,12 +304,13 @@ export function SignalPlot({ channel, clock, delay, color, scale, decimals, labe
       if (now - lastDraw < 1000 / 30) return;
       lastDraw = now;
       const bounds = canvas!.getBoundingClientRect();
-      if (bounds.bottom < 0 || bounds.top > window.innerHeight) return;
+      const visible = bounds.bottom >= 0 && bounds.top <= window.innerHeight;
       const end = endTime(now);
       const data = series(end);
-      if (visualization === 'waveform') { drawWaveform(data); return; }
+      if (visualization === 'waveform') { if (visible) drawWaveform(data); return; }
       const latest = data.times.at(-1) ?? -1;
-      if (latest !== lastAnalysisTime) {
+      if (latest !== lastAnalysisTime && now - lastAnalysisDraw >= 100) {
+        lastAnalysisDraw = now;
         lastAnalysisTime = latest;
         currentSpectrum = analyze(data);
         if (currentSpectrum) {
@@ -309,6 +320,7 @@ export function SignalPlot({ channel, clock, delay, color, scale, decimals, labe
           modulation.ingest(currentSpectrum, latest, analysisRate, analysisSettings.spectrumMode === 'relative' ? 'filtered' : 'raw');
         }
       }
+      if (!visible) return;
       if (visualization === 'spectrum') drawSpectrum(currentSpectrum);
       else if (visualization === 'spectrogram') drawSpectrogram(end);
       else drawModulation(currentSpectrum);

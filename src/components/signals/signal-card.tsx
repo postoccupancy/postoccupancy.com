@@ -4,14 +4,13 @@ import { useEffect, useRef, useState } from 'react';
 import ExpandMore from '@mui/icons-material/ExpandMore';
 import Pause from '@mui/icons-material/Pause';
 import PlayArrow from '@mui/icons-material/PlayArrow';
-import { Box, Button, Collapse, IconButton, Link, Slider, Stack, Typography } from '@mui/material';
+import { Box, Button, Collapse, IconButton, Slider, Stack, Typography } from '@mui/material';
 import type { SignalAnalysisSettings } from '@/components/settings/settings-provider';
 import type { Assignment } from '@/lib/router/router-interface';
 import type { Channel, NodeClock } from '@/lib/signals/router-client';
 import { useRouterInterface } from './router-provider';
 import { SignalPlot, type SignalVisualization } from './signal-plot';
 
-const routerOrigin = () => (process.env.NEXT_PUBLIC_SIGNAL_ROUTER_URL || 'wss://rf.postoccupancy.com').replace(/^ws/, 'http');
 const gainLabel = (power: number) => `${Number((2 ** power).toFixed(2))}×`;
 
 function AssignmentInput({ signal, field, value, fallback, onChange }: {
@@ -22,11 +21,21 @@ function AssignmentInput({ signal, field, value, fallback, onChange }: {
   onChange: (value: string) => void;
 }) {
   const shown = value ?? fallback;
+  if (field === 'channel' || field === 'cc') {
+    const options = field === 'channel' ? Array.from({ length: 16 }, (_, index) => index + 1) : Array.from({ length: 128 }, (_, index) => index);
+    return <Box>
+      <Typography component="label" htmlFor={`${signal}-${field}`} variant="caption" color="text.secondary">{field === 'channel' ? 'MIDI channel' : 'CC'}</Typography>
+      <Box component="select" id={`${signal}-${field}`} value={value ?? ''} onChange={(event) => onChange(event.currentTarget.value)}
+        sx={{ display: 'block', width: '100%', mt: 0.5, p: 0.75, border: 1, borderColor: 'divider', borderRadius: 0.5, bgcolor: 'background.paper', color: 'text.primary', font: 'inherit' }}>
+        <option value="">—</option>
+        {options.map((option) => <option key={option} value={option}>{field === 'cc' ? `CC ${option}` : option}</option>)}
+      </Box>
+    </Box>;
+  }
   return <Box>
-    <Typography component="label" htmlFor={`${signal}-${field}`} variant="caption" color="text.secondary">{field === 'channel' ? 'MIDI channel' : field.toUpperCase()}</Typography>
+    <Typography component="label" htmlFor={`${signal}-${field}`} variant="caption" color="text.secondary">{field.toUpperCase()}</Typography>
     <Box component="input" id={`${signal}-${field}`} type="number" key={String(shown)} defaultValue={shown}
-      min={field === 'channel' ? 1 : field === 'cc' ? 0 : undefined} max={field === 'channel' ? 16 : field === 'cc' ? 127 : undefined}
-      step={field === 'channel' || field === 'cc' ? 1 : 'any'} placeholder="—"
+      step="any" placeholder="—"
       onBlur={(event) => { if (event.currentTarget.validity.valid) onChange(event.currentTarget.value); else event.currentTarget.value = String(shown); }}
       onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }}
       sx={{ display: 'block', width: '100%', mt: 0.5, p: 0.75, border: 1, borderColor: 'divider', borderRadius: 0.5, bgcolor: 'background.paper', color: 'text.primary', font: 'inherit' }} />
@@ -68,7 +77,7 @@ function useSignalAudio(channel: Channel, gainPower: number) {
       await context.resume();
       if (!mounted.current) { void context.close(); return; }
       const latest = channel.ring.latest();
-      const current = { context, gain, lastTime: latest?.t ?? -1, nextStart: context.currentTime + 0.15, sources: new Set<AudioBufferSourceNode>(), timer: 0 as unknown as ReturnType<typeof setInterval> };
+      const current = { context, gain, lastTime: latest ? latest.t - 500_000 : -1, nextStart: context.currentTime + 0.15, sources: new Set<AudioBufferSourceNode>(), timer: 0 as unknown as ReturnType<typeof setInterval> };
       const feed = () => {
         if (state.current !== current || !(channel.sampleRate > 0)) return;
         const samples: { t: number; v: number }[] = [];
@@ -80,8 +89,8 @@ function useSignalAudio(channel: Channel, gainPower: number) {
         let peak = 0;
         samples.forEach((sample) => { peak = Math.max(peak, Math.abs(sample.v - mean)); });
         const storageKey = `rf.scalarFullScale.osc/${channel.node}/${channel.param}`;
-        let fullScale = Number(localStorage.getItem(storageKey)) || 0;
-        if (!fullScale && peak) { fullScale = peak * 16; try { localStorage.setItem(storageKey, String(fullScale)); } catch {} }
+        let fullScale = peak ? peak * 16 : Number(localStorage.getItem(storageKey)) || 0;
+        if (peak) { try { localStorage.setItem(storageKey, String(fullScale)); } catch {} }
         fullScale ||= 1;
         const duration = samples.length / channel.sampleRate;
         const outputLength = Math.max(1, Math.round(duration * context.sampleRate));
@@ -90,7 +99,7 @@ function useSignalAudio(channel: Channel, gainPower: number) {
         for (let index = 0; index < output.length; index++) {
           const position = index / Math.max(1, output.length - 1) * (samples.length - 1);
           const low = Math.floor(position); const high = Math.min(samples.length - 1, low + 1); const mix = position - low;
-          output[index] = (samples[low].v * (1 - mix) + samples[high].v * mix) / fullScale;
+          output[index] = (samples[low].v * (1 - mix) + samples[high].v * mix - mean) / fullScale;
         }
         const now = context.currentTime;
         if (current.nextStart < now + 0.02) current.nextStart = now + 0.15;
@@ -101,6 +110,7 @@ function useSignalAudio(channel: Channel, gainPower: number) {
       };
       current.timer = setInterval(feed, 50);
       state.current = current;
+      feed();
       setPlaying(true);
     } catch {
       stop();
@@ -136,11 +146,9 @@ export function SignalCard({ channel, clock, delay, color, scale, decimals, name
   const assignment = row?.assignment ?? {};
   const audio = useSignalAudio(channel, gainPower);
   const custom = [assignment.channel !== undefined && `MIDI Ch ${assignment.channel}`, assignment.cc !== undefined && `CC ${assignment.cc}`, assignment.min !== undefined && `Min ${assignment.min}`, assignment.max !== undefined && `Max ${assignment.max}`, customGain && `Gain ${gainLabel(gainPower)}`, audio.playing && 'Audio playing'].filter(Boolean) as string[];
-  const sourceUrl = new URL(`/${channel.node}/`, routerOrigin()).href;
-
   return <Box component="section" aria-label={`${source} ${name}`} sx={{ minWidth: 0, border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
     <Stack direction="row" spacing={1} sx={{ px: 1.5, py: 0.75, justifyContent: 'space-between', alignItems: 'center' }}>
-      <Stack direction="row" spacing={1} sx={{ alignItems: 'baseline', minWidth: 0 }}>
+      <Stack direction="row" spacing={1} sx={{ alignItems: 'center', minWidth: 0 }}>
         <IconButton size="small" aria-label={`${expanded ? 'Close' : 'Open'} settings for ${signal}`} aria-expanded={expanded} onClick={() => setExpanded((value) => !value)} sx={{ ml: -0.75 }}><ExpandMore sx={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 150ms' }} /></IconButton>
         <Typography component="h2" variant="body2" sx={{ fontWeight: 600 }}>{name}</Typography>
         <Typography variant="caption" color="text.secondary">{source}</Typography>
@@ -151,10 +159,7 @@ export function SignalCard({ channel, clock, delay, color, scale, decimals, name
     {!expanded && !!custom.length && <Typography variant="caption" color="text.secondary" sx={{ display: 'block', px: 1.5, py: 0.75 }}>{custom.join(' · ')}</Typography>}
     <Collapse in={expanded} unmountOnExit>
       <Box sx={{ p: 2, borderTop: 1, borderColor: 'divider' }}>
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ justifyContent: 'space-between', alignItems: { sm: 'baseline' }, mb: 2 }}>
-          <Typography variant="body2" sx={{ fontFamily: 'monospace', overflowWrap: 'anywhere' }}>{signal}</Typography>
-          <Link href={sourceUrl} target="_blank" rel="noreferrer">Open {source} node ↗</Link>
-        </Stack>
+        <Typography variant="body2" sx={{ mb: 2, fontFamily: 'monospace', overflowWrap: 'anywhere' }}>{signal}</Typography>
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(4, minmax(100px, 1fr))' }, gap: 1.5 }}>
           {(['channel', 'cc', 'min', 'max'] as const).map((field) => <AssignmentInput key={field} signal={signal} field={field} value={assignment[field]} fallback={field === 'min' ? row?.signal.min ?? 0 : field === 'max' ? row?.signal.max ?? 1 : ''} onChange={(next) => model.setAssignment(signal, field, next)} />)}
         </Box>
