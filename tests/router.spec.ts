@@ -26,7 +26,9 @@ test('replays router metadata after navigation, discovers signals, and acknowled
   await expect(page.getByText('adrian-pi (linux)')).toBeVisible();
   await expect(page.getByText('WiFi: Studio · 3 client(s)')).toBeVisible();
   await expect(page.getByText('Web tunnel · 1 tab(s)')).toBeVisible();
-  await expect(page.getByRole('table').first()).toContainText('Disabled');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(page.getByRole('table', { name: 'OSC ports' })).toContainText('Disabled');
+  await page.getByRole('button', { name: 'Close settings' }).click();
   const audio = page.getByRole('button', { name: 'pcm/electric-sky/audio output' });
   await expect(audio).toHaveAttribute('aria-pressed', 'false');
   await audio.click();
@@ -44,7 +46,7 @@ test('replays router metadata after navigation, discovers signals, and acknowled
   await channel.fill('3'); await channel.press('Enter');
   await page.getByRole('button', { name: `${signal.device} output` }).click();
   await expect(page.getByRole('link', { name: `View ${signal.device}` })).toHaveAttribute('href', '/interfaces/spectral-visualizer?device=osc%2Felectric-sky%2Ftemperature');
-  await page.getByRole('link', { name: 'Indoor Sky', exact: true }).click();
+  await page.getByRole('link', { name: 'Signals', exact: true }).click();
   await page.getByRole('link', { name: 'Electric Sea', exact: true }).click();
   await expect(audio).toHaveAttribute('aria-pressed', 'true');
   sockets[0].send(JSON.stringify(signal));
@@ -72,7 +74,7 @@ test('refreshes metadata and capabilities after reconnect and presents USB batch
   await expect(page.getByRole('rowheader', { name: signal.device })).toHaveCount(0);
 });
 
-test('maps MIDI, prevents port feedback, forwards input, and releases ports on navigation', async ({ page }) => {
+test('maps MIDI, prevents port feedback, forwards input, and retains global ports across navigation', async ({ page }) => {
   await page.addInitScript(() => {
     const state = { sent: [] as number[][], requests: 0, closed: 0 };
     const input = { id: 'in', name: 'Test bus', onmidimessage: null as null | ((event: { data: Uint8Array }) => void), close: async () => { state.closed++; } };
@@ -84,8 +86,10 @@ test('maps MIDI, prevents port feedback, forwards input, and releases ports on n
   const sent: Record<string, unknown>[] = [];
   await page.routeWebSocket('wss://rf.postoccupancy.com', (ws) => { socket = ws; handshake(ws); ws.onMessage((raw) => sent.push(JSON.parse(String(raw)))); });
   await page.goto('/hubs/electric-sea');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByRole('button', { name: 'Enable MIDI', exact: true }).click();
   await page.getByRole('button', { name: 'Send to Test bus', exact: true }).click();
+  await page.getByRole('button', { name: 'Close settings' }).click();
   socket.send(JSON.stringify(signal));
   for (const [field, value] of [['channel', '2'], ['cc', '0']]) {
     const input = page.getByRole('spinbutton', { name: `${signal.device} ${field}`, exact: true });
@@ -97,6 +101,7 @@ test('maps MIDI, prevents port feedback, forwards input, and releases ports on n
   // Mapped CC emits once, with no second raw passthrough.
   socket.send(JSON.stringify({ type: 'midi', device: 'Remote keyboard', source: 'remote', msgType: 'cc', channel: 4, cc: 7, value: 127, raw: [0xb3, 7, 127] }));
   await expect.poll(async () => (await midiState()).sent.filter((bytes) => bytes[0] === 0xb3)).toHaveLength(1);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByRole('button', { name: 'Receive from Test bus', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Send to Test bus', exact: true })).toHaveAttribute('aria-pressed', 'false');
   await page.evaluate(() => (window as unknown as { midiTest: { input: { onmidimessage: (event: { data: Uint8Array }) => void } } }).midiTest.input.onmidimessage({ data: new Uint8Array([0x90, 60, 100]) }));
@@ -104,10 +109,10 @@ test('maps MIDI, prevents port feedback, forwards input, and releases ports on n
   await page.getByRole('button', { name: 'Send to Test bus', exact: true }).click();
   socket.send(JSON.stringify({ type: 'midi', device: 'Remote keyboard', source: 'remote', msgType: 'noteon', channel: 1, note: 62, velocity: 100, raw: [0x90, 62, 100] }));
   await expect.poll(async () => (await midiState()).sent).toContainEqual([0x90, 62, 100]);
-  await page.getByRole('link', { name: 'Indoor Sky', exact: true }).click();
-  await expect.poll(async () => (await midiState()).closed).toBe(2);
-  expect((await midiState()).sent).toContainEqual([0x80, 62, 0]);
+  await page.getByRole('button', { name: 'Close settings' }).click();
+  await page.getByRole('link', { name: 'Signals', exact: true }).click();
+  expect((await midiState()).closed).toBe(0);
   const count = (await midiState()).sent.length;
   socket.send(JSON.stringify(signal));
-  expect((await midiState()).sent).toHaveLength(count);
+  await expect.poll(async () => (await midiState()).sent.length).toBeGreaterThan(count);
 });

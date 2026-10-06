@@ -76,11 +76,10 @@ function Section({ group, pathname, onNavigate }: {
 
 export function DocsNavigation({ onNavigate }: { onNavigate: () => void }) {
   const pathname = usePathname();
-  const activePathname = pathname === '/' ? '/nodes/electric-sky' : pathname;
   return (
     <Box component="nav" aria-label="Main navigation" sx={{ px: 1.5, pb: 3 }}>
       <List disablePadding>
-        {groups.map((group) => <Section key={group.id} group={group} pathname={activePathname} onNavigate={onNavigate} />)}
+        {groups.map((group) => <Section key={group.id} group={group} pathname={pathname} onNavigate={onNavigate} />)}
       </List>
     </Box>
   );

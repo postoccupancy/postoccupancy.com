@@ -52,6 +52,14 @@ Historical deployment context: removing `docs/` from `b2b-dashboard-demo/.vercel
 - ESLint remains on 9 because the bundled Next lint plugins previously failed with ESLint 10. Upgrade the lint stack together rather than independently bumping that package.
 - `next-env.d.ts`, `.next/`, build artifacts, local environment files, browser reports, and `node_modules/` are not committed. `.env.example` is committed.
 
+## Phase 1 combined signals and global settings (2026-10-06)
+
+- `/` is the **Signals** dashboard and combines all discovered Electric Sky and Indoor Sky streams. Each chart identifies its node. The former node-specific routes redirect to `/`.
+- A Settings button at the bottom of the side rail opens the global settings modal. Categories currently include General, Signals, and Voices; General owns presentation delay, OSC UDP status, and Local MIDI ports.
+- Presentation delay defaults to six seconds, applies globally to all signal plots, and appears beside the dashboard live status.
+- `RouterInterface` now lives in the root router provider so its MIDI/OSC state is available to global settings and MIDI routing survives page navigation. It still releases resources when the provider unmounts.
+- These decisions replace the older Overview, separate node-dashboard, and page-local MIDI lifecycle notes below.
+
 ## Navigation and layout decisions
 
 Overview is the home route `/`, reached through the **Post Occupancy** wordmark. It has no sidebar entry and no breadcrumb. All navigation groups are peers; Overview is not their parent. Breadcrumbs read, for example, `Lab / DSP for Artists`, never `Overview / Lab / DSP for Artists`.

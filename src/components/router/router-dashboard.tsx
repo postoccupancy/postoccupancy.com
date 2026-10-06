@@ -1,15 +1,14 @@
 'use client';
 
-import { useEffect, useState, useSyncExternalStore } from 'react';
 import NextLink from 'next/link';
 import { Box, Button, Link, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography } from '@mui/material';
-import { useSignalRouter } from '@/components/signals/router-provider';
+import { useRouterInterface, useSignalRouter } from '@/components/signals/router-provider';
 import { RouterInterface, connectionType, normalized, type Assignment, type SignalRow } from '@/lib/router/router-interface';
 
 const routerOrigin = () => (process.env.NEXT_PUBLIC_SIGNAL_ROUTER_URL || 'wss://rf.postoccupancy.com').replace(/^ws/, 'http');
 function external(path: string) { return new URL(path, routerOrigin()).href; }
 function nodeLink(name: string) {
-  return name === 'electric-sky' || name === 'indoor-sky' ? `/nodes/${name}` : undefined;
+  return name === 'electric-sky' || name === 'indoor-sky' ? '/' : undefined;
 }
 function rawValue({ signal }: SignalRow) {
   if (signal.type === 'audio') return signal.available ? `Live · ${signal.sampleRate || 0} Hz` : 'Idle';
@@ -46,9 +45,7 @@ function Heading({ children }: { children: React.ReactNode }) {
 
 export function RouterDashboard() {
   const router = useSignalRouter();
-  const [model] = useState(() => new RouterInterface(router));
-  useSyncExternalStore(model.subscribe, model.getSnapshot, model.getServerSnapshot);
-  useEffect(() => model.start(), [model]);
+  const model = useRouterInterface();
   const { server, client, clients } = model;
   const connected = router.status === 'connected';
   const groups = new Map<string, SignalRow[]>();
@@ -56,10 +53,6 @@ export function RouterDashboard() {
     const rows = groups.get(row.signal.source) || [];
     rows.push(row); groups.set(row.signal.source, rows);
   }
-  const ports = new Map<string, { input?: MIDIInput; output?: MIDIOutput }>();
-  for (const input of model.midi?.inputs.values() || []) { const name = input.name || input.id; ports.set(name, { ...ports.get(name), input }); }
-  for (const output of model.midi?.outputs.values() || []) { const name = output.name || output.id; ports.set(name, { ...ports.get(name), output }); }
-  const osc = client?.oscUdpAvailable === true;
   const tableStyle = { '& th': { whiteSpace: 'nowrap' }, '& td': { fontVariantNumeric: 'tabular-nums' } };
 
   return <Box sx={tableStyle}>
@@ -81,34 +74,6 @@ export function RouterDashboard() {
         <Typography variant="body2" color="text.secondary">{server ? `${server.networkMode === 'ap' ? 'AP' : 'WiFi'}: ${server.networkSsid || 'unknown'}` : ''}{clients ? ` · ${clients.count} client(s)` : ''}</Typography>
       </Box>
     </Box>
-
-    <Heading>OSC UDP</Heading>
-    <TableContainer tabIndex={0} aria-label="OSC ports">
-      <Table size="small" sx={{ minWidth: 600 }}><TableHead><TableRow>{['Direction', 'Endpoint', 'Enabled', 'Purpose'].map((label) => <TableCell key={label}>{label}</TableCell>)}</TableRow></TableHead>
-        <TableBody>
-          <TableRow><TableCell>Into router</TableCell><TableCell>{server ? String(server.hostname) : new URL(routerOrigin()).hostname}:{String(client?.oscInPort || 5005)}</TableCell><TableCell>{client ? osc ? 'Always on' : 'LAN / VPN only' : 'Checking'}</TableCell><TableCell>OSC senders → router</TableCell></TableRow>
-          <TableRow><TableCell>Out to this machine</TableCell><TableCell>{String(client?.ip || 'This client')}:{String(client?.oscOutPort || 9000)}</TableCell><TableCell>{client ? osc ? 'Always on' : 'Disabled' : 'Checking'}</TableCell><TableCell>{String(client?.oscUdpReason || 'Waiting for router connection details')}</TableCell></TableRow>
-        </TableBody>
-      </Table>
-    </TableContainer>
-
-    <Heading>Local MIDI ports</Heading>
-    <Stack direction="row" spacing={2} sx={{ mb: 1, alignItems: 'center' }}>
-      {!model.midi && <Button variant="outlined" size="small" onClick={() => void model.enableMidi()} disabled={model.midiStatus === 'Requesting MIDI access…'}>Enable MIDI</Button>}
-      <Typography role="status" aria-label="MIDI status" variant="body2">{model.midiStatus}</Typography>
-    </Stack>
-    <TableContainer tabIndex={0} aria-label="Local MIDI ports">
-      <Table size="small" sx={{ minWidth: 550 }}><TableHead><TableRow>{['Port', 'Send to port', 'Receive from port', 'Status'].map((label) => <TableCell key={label}>{label}</TableCell>)}</TableRow></TableHead>
-        <TableBody>{[...ports].map(([name, { input, output }]) => {
-          const state = model.portState[name] || {};
-          return <TableRow key={name}><TableCell>{name}</TableCell>
-            <TableCell>{output ? <Toggle label={`Send to ${name}`} enabled={!!state.receive} onClick={() => model.setPort(name, 'receive', !state.receive)} /> : '—'}</TableCell>
-            <TableCell>{input ? <Toggle label={`Receive from ${name}`} enabled={!!state.send} onClick={() => model.setPort(name, 'send', !state.send)} /> : '—'}</TableCell>
-            <TableCell>{state.receive ? 'Router sending to port' : state.send ? 'Router receiving from port' : 'Off'}</TableCell>
-          </TableRow>;
-        })}{!ports.size && <TableRow><TableCell colSpan={4}>{model.midi ? 'No MIDI ports found. See setup help below.' : 'Enable MIDI to access ports on this computer.'}</TableCell></TableRow>}</TableBody>
-      </Table>
-    </TableContainer>
 
     <Heading>Client routes on server</Heading>
     <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>CH / CC and range assignments control this browser’s MIDI output. Audio Out switches the source on the router.</Typography>
@@ -144,7 +109,7 @@ export function RouterDashboard() {
     })}
     <Box component="details" sx={{ mt: 4, '& p': { mb: 1 }, '& summary': { cursor: 'pointer', mb: 2 } }}>
       <Typography component="summary" sx={{ fontWeight: 600 }}>Setup help</Typography>
-      <Typography variant="body2">Use a browser with WebMIDI support, such as Chrome. Choose Enable MIDI and allow access when asked. MIDI runs while Electric Sea is open; leaving this page releases its ports.</Typography>
+      <Typography variant="body2">Use a browser with WebMIDI support, such as Chrome. Open Settings, choose Enable MIDI under General, and allow access when asked. MIDI remains active while this site is open.</Typography>
       <Typography variant="body2"><strong>Mac:</strong> Open Audio MIDI Setup → MIDI Studio → IAC Driver. Enable “Device is online” and add a bus. In your music application, enable that bus as a MIDI input.</Typography>
       <Typography variant="body2"><strong>Windows:</strong> Create a virtual port with loopMIDI, then select it in your music application.</Typography>
       <Typography variant="body2">“Send to port” sends router signals to a local MIDI output; “Receive from port” sends local MIDI input to the router. Only one direction is enabled per named port to prevent feedback.</Typography>

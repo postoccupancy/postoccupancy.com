@@ -13,8 +13,7 @@ export interface NavigationGroup {
 export const groups: NavigationGroup[] = [
   {
     title: 'Nodes', id: 'nodes', items: [
-      { title: 'Electric Sky', href: '/nodes/electric-sky', description: 'Live environmental observations and documentation for the Electric Sky sensor node.' },
-      { title: 'Indoor Sky', href: '/nodes/indoor-sky', description: 'Live environmental observations and documentation for the Indoor Sky sensor node.' },
+      { title: 'Signals', href: '/', description: 'Live environmental signals from the Electric Sky and Indoor Sky sensor nodes.' },
     ],
   },
   {

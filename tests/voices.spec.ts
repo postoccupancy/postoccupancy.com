@@ -35,7 +35,7 @@ test('subscribes on the shared socket, shows live values/readiness, and resubscr
     sockets.push(socket);
     socket.onMessage((raw) => { const message = JSON.parse(String(raw)); commands.push(message); if (message.type === 'resident_subscribe' && message.enabled) socket.send(JSON.stringify(voices(false))); });
   });
-  await page.goto('/nodes/electric-sky');
+  await page.goto('/');
   await page.getByRole('navigation').getByRole('link', { name: 'Resident Frequency', exact: true }).click();
   await expect(page.getByText('0 of 1 streams ready')).toBeVisible();
   await expect(page.getByRole('button', { name: 'enable MIDI', exact: true })).toBeDisabled();
@@ -95,7 +95,7 @@ test('routes notes and all beat levels, applies CC ranges, and stops output on c
   await page.getByRole('button', { name: 'panic', exact: true }).click();
   const count = (await state()).sent.length;
   socket.send(JSON.stringify(voices())); await page.waitForTimeout(100); expect((await state()).sent).toHaveLength(count);
-  await page.getByRole('navigation').getByRole('link', { name: 'Indoor Sky', exact: true }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Signals', exact: true }).click();
   await expect.poll(async () => (await state()).audioClosed).toBe(1);
   expect((await state()).closed).toBe(1); expect((await state()).stopped).toBe(2);
   expect(errors).toEqual([]);
@@ -111,13 +111,13 @@ test('releases notes when analysis becomes unready and ignores late MIDI permiss
   socket.send(JSON.stringify(voices(false)));
   await expect(page.getByRole('button', { name: 'enable MIDI', exact: true })).toBeDisabled();
   await expect.poll(() => page.evaluate(() => (window as unknown as { voicesTest: OutputTest }).voicesTest.sent.some(({ bytes }) => bytes[0] === 0x80))).toBe(true);
-  await page.getByRole('navigation').getByRole('link', { name: 'Indoor Sky', exact: true }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Signals', exact: true }).click();
   await page.evaluate(() => {
     Object.defineProperty(navigator, 'requestMIDIAccess', { value: () => new Promise((resolve) => Object.assign(window, { resolveMidi: resolve })) });
   });
   await page.getByRole('navigation').getByRole('link', { name: 'Resident Frequency', exact: true }).click();
   await page.getByRole('button', { name: 'enable MIDI', exact: true }).click();
-  await page.getByRole('navigation').getByRole('link', { name: 'Indoor Sky', exact: true }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Signals', exact: true }).click();
   await page.evaluate(() => (window as unknown as { resolveMidi: (access: unknown) => void }).resolveMidi({ outputs: new Map(), onstatechange: null }));
-  await expect(page.getByRole('heading', { name: 'Indoor Sky', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Signals', exact: true })).toBeVisible();
 });

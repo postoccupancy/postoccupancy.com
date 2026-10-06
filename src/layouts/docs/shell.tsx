@@ -12,6 +12,8 @@ import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import MenuOpen from '@mui/icons-material/MenuOpen';
 import Menu from '@mui/icons-material/Menu';
+import SettingsOutlined from '@mui/icons-material/SettingsOutlined';
+import { GlobalSettings } from '@/components/settings/global-settings';
 import { DocsNavigation } from './navigation';
 
 const SIDEBAR_WIDTH = 280;
@@ -20,6 +22,7 @@ export function DocsShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [expanded, setExpanded] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const desktop = useMediaQuery(useTheme().breakpoints.up('md'));
   const opener = useRef<HTMLButtonElement>(null);
   const closer = useRef<HTMLButtonElement>(null);
@@ -42,7 +45,7 @@ export function DocsShell({ children }: { children: ReactNode }) {
 
   function sidebar(mobile: boolean) {
     return (
-      <>
+      <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: 3, py: 3, gap: 1 }}>
           <Typography component={NextLink} href="/" onClick={() => setMobileOpen(false)} sx={{ color: 'text.primary', textDecoration: 'none', fontSize: 16, fontWeight: 600, letterSpacing: '-0.04em' }}>
             Post Occupancy
@@ -53,8 +56,13 @@ export function DocsShell({ children }: { children: ReactNode }) {
             </IconButton>
           </Tooltip>
         </Box>
-        <DocsNavigation onNavigate={() => setMobileOpen(false)} />
-      </>
+        <Box sx={{ flex: 1 }}><DocsNavigation onNavigate={() => setMobileOpen(false)} /></Box>
+        <Box sx={{ position: 'sticky', bottom: 0, bgcolor: 'background.paper', borderTop: 1, borderColor: 'divider', p: 1.5 }}>
+          <Box component="button" type="button" onClick={() => { setMobileOpen(false); setSettingsOpen(true); }} sx={{ display: 'flex', alignItems: 'center', width: '100%', gap: 1.25, border: 0, borderRadius: 1, bgcolor: 'transparent', color: 'text.secondary', px: 1.5, py: 1, font: 'inherit', fontSize: 13, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover', color: 'text.primary' } }}>
+            <SettingsOutlined sx={{ fontSize: 18 }} /> Settings
+          </Box>
+        </Box>
+      </Box>
     );
   }
 
@@ -91,6 +99,7 @@ export function DocsShell({ children }: { children: ReactNode }) {
       <Box component="main" id="main-content" tabIndex={-1} sx={{ flex: 1, minWidth: 0, height: '100%', overflowY: 'auto', '&:focus': { outline: 'none' } }}>
         {children}
       </Box>
+      <GlobalSettings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </Box>
   );
 }

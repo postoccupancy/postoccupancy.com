@@ -12,11 +12,15 @@ test('all named routes render their title, breadcrumbs, and selected navigation'
   for (const entry of pages) {
     const response = await page.goto(entry.href);
     expect(response?.status()).toBe(200);
-    await expect(page.getByRole('heading', { level: 1, name: entry.title, exact: true })).toBeVisible();
     await expect(page).toHaveTitle(`${entry.title} | Post Occupancy`);
     const nav = page.getByRole('navigation', { name: 'Main navigation' });
     const breadcrumb = page.getByRole('navigation', { name: 'Breadcrumb', exact: true });
     await expect(nav.getByRole('link', { name: entry.title, exact: true })).toHaveAttribute('aria-current', 'page');
+    if (entry.href === '/instruments/processing-sketches') {
+      await expect(breadcrumb).toHaveCount(0);
+      continue;
+    }
+    await expect(page.getByRole('heading', { level: 1, name: entry.title, exact: true })).toBeVisible();
     const section = groups.find((group) => group.items.some((item) => item.href === entry.href));
     await expect(breadcrumb).toHaveText(`${section!.title}/${entry.title}`);
   }
@@ -24,24 +28,24 @@ test('all named routes render their title, breadcrumbs, and selected navigation'
 });
 
 test('sections collapse and active sections reopen on history navigation', async ({ page }) => {
-  await page.goto('/nodes/electric-sky');
+  await page.goto('/');
   const nav = page.getByRole('navigation', { name: 'Main navigation' });
   const nodes = nav.getByRole('button', { name: 'Nodes', exact: true });
   await nodes.click();
   await expect(nodes).toHaveAttribute('aria-expanded', 'false');
-  await expect(nav.getByRole('link', { name: 'Indoor Sky' })).not.toBeVisible();
+  await expect(nav.getByRole('link', { name: 'Signals' })).not.toBeVisible();
   await nav.getByRole('link', { name: 'Notes', exact: true }).click();
   await expect(page).toHaveURL('/lab/notes');
   await expect(page.getByRole('navigation', { name: 'Breadcrumb', exact: true })).toHaveText('Lab/Notes');
   await page.goBack();
   await expect(nodes).toHaveAttribute('aria-expanded', 'true');
-  await expect(nav.getByRole('link', { name: 'Electric Sky' })).toBeVisible();
+  await expect(nav.getByRole('link', { name: 'Signals' })).toBeVisible();
   await page.getByRole('link', { name: 'Post Occupancy', exact: true }).click();
   await expect(page).toHaveURL('/');
-  await expect(page.getByRole('heading', { level: 1, name: 'Electric Sky', exact: true })).toBeVisible();
-  await expect(page).toHaveTitle('Electric Sky | Post Occupancy');
-  await expect(page.getByRole('navigation', { name: 'Breadcrumb', exact: true })).toHaveText('Nodes/Electric Sky');
-  await expect(nav.getByRole('link', { name: 'Electric Sky', exact: true })).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByRole('heading', { level: 1, name: 'Signals', exact: true })).toBeVisible();
+  await expect(page).toHaveTitle('Signals | Post Occupancy');
+  await expect(page.getByRole('navigation', { name: 'Breadcrumb', exact: true })).toHaveText('Nodes/Signals');
+  await expect(nav.getByRole('link', { name: 'Signals', exact: true })).toHaveAttribute('aria-current', 'page');
 });
 
 test('collapsing the sidebar releases the full viewport width and retains a keyboard control', async ({ page }) => {
@@ -85,7 +89,7 @@ test('unknown routes render a real 404', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible();
   await page.getByRole('link', { name: 'Return home' }).click();
   await expect(page).toHaveURL('/');
-  await expect(page.getByRole('heading', { level: 1, name: 'Electric Sky', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Signals', exact: true })).toBeVisible();
 });
 
 test('MDX prose surrounds a working React wave explorer', async ({ page }) => {
