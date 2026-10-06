@@ -70,21 +70,29 @@ test('discovers channels, converts power, and shares one socket across routes', 
   await page.getByRole('option', { name: /Indoor Sky/ }).click();
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'spectrogram', exact: true }).click();
-  const filledFraction = () => page.getByRole('region', { name: 'Electric Sky Microphone RMS' }).getByRole('img').evaluate((canvas: HTMLCanvasElement) => {
+  const spectrogramMetrics = () => page.getByRole('region', { name: 'Electric Sky Microphone RMS' }).getByRole('img').evaluate((canvas: HTMLCanvasElement) => {
     const context = canvas.getContext('2d')!;
     const y = Math.floor(canvas.height * 0.6);
     const pixels = context.getImageData(0, y, canvas.width, 1).data;
-    let filled = 0;
+    let filled = 0, blankRun = 0, longestBlankRun = 0, firstFilled = -1, lastFilled = -1;
     for (let x = 0; x < canvas.width; x++) {
       const offset = x * 4;
-      if (pixels[offset] < 230 || pixels[offset + 1] < 230 || pixels[offset + 2] < 230) filled++;
+      const colored = pixels[offset] < 230 || pixels[offset + 1] < 230 || pixels[offset + 2] < 230;
+      if (colored) { filled++; firstFilled = firstFilled < 0 ? x : firstFilled; lastFilled = x; }
     }
-    return filled / canvas.width;
+    for (let x = firstFilled; x <= lastFilled; x++) {
+      const offset = x * 4;
+      const colored = pixels[offset] < 230 || pixels[offset + 1] < 230 || pixels[offset + 2] < 230;
+      if (colored) blankRun = 0; else { blankRun++; longestBlankRun = Math.max(longestBlankRun, blankRun); }
+    }
+    return { filledFraction: filled / canvas.width, longestBlankFraction: longestBlankRun / canvas.width };
   });
-  await expect.poll(filledFraction).toBeGreaterThan(0.8);
+  await expect.poll(async () => (await spectrogramMetrics()).filledFraction).toBeGreaterThan(0.8);
+  await expect.poll(async () => (await spectrogramMetrics()).longestBlankFraction).toBeLessThan(0.03);
   const aggregation = page.getByRole('slider', { name: 'Aggregation', exact: true });
   await aggregation.focus(); await aggregation.press('End');
-  await expect.poll(filledFraction).toBeGreaterThan(0.8);
+  await expect.poll(async () => (await spectrogramMetrics()).filledFraction).toBeGreaterThan(0.8);
+  await expect.poll(async () => (await spectrogramMetrics()).longestBlankFraction).toBeLessThan(0.03);
   await aggregation.press('Home');
   await page.getByRole('button', { name: 'waveform', exact: true }).click();
   await expect(charts.first()).toHaveAccessibleName(/waveform view/);

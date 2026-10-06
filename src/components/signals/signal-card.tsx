@@ -123,6 +123,6 @@ export function SignalCard({ channel, clock, delay, color, scale, decimals, name
         </Stack>
       </Box>
     </Collapse>
-    {audioMounted && <Box ref={audioRoot} sx={{ display: 'none' }}><VisualizerSurface device={signal} router={router} /></Box>}
+    {audioMounted && <Box ref={audioRoot} sx={{ display: 'none' }}><VisualizerSurface device={signal} router={router} audioOnly /></Box>}
   </Box>;
 }

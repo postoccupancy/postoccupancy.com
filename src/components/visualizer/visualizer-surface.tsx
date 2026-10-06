@@ -8,14 +8,16 @@ import styles from './visualizer.module.css';
 // Keep the original renderer's imperative controls isolated from selector updates.
 export const VisualizerSurface = memo(function VisualizerSurface({
   device,
-  router
+  router,
+  audioOnly = false,
 }: {
   device: string;
   router: RouterClient;
+  audioOnly?: boolean;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const { signalAnalysis } = useSettings();
-  useEffect(() => mountVisualizer(root.current!, device, router, signalAnalysis), [device, router, signalAnalysis]);
+  useEffect(() => mountVisualizer(root.current!, device, router, signalAnalysis, { audioOnly }), [audioOnly, device, router, signalAnalysis]);
   return <div ref={root} className={styles.surface}>
     <header><div className="signal-title">SIGNAL · <span data-viz="deviceLabel"></span></div><div className="controls global-controls">
     <button data-viz="audio" aria-pressed="false">start audio</button>

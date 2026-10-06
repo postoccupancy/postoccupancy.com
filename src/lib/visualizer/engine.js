@@ -22,8 +22,9 @@ function writeStorage(key, value) {
  * @param {string} device
  * @param {import('../signals/router-client').RouterClient} router
  * @param {import('../../components/settings/settings-provider').SignalAnalysisSettings} settings
+ * @param {{audioOnly?: boolean}} [options]
  */
-export function mountVisualizer(root, device, router, settings) {
+export function mountVisualizer(root, device, router, settings, options = {}) {
   let disposed = false,
     animationFrame = 0;
   const events = new AbortController(),
@@ -1173,7 +1174,7 @@ registerProcessor('signal-meter', SignalMeter);
     missing.textContent = missingCount;
     arrival.textContent = `${lastArrival ? (performance.now() - lastArrival).toFixed(0) : 0}/${maxArrival.toFixed(0)} ms`;
   }
-  animationFrame = requestAnimationFrame(render);
+  if (!options.audioOnly) animationFrame = requestAnimationFrame(render);
   function stopScheduled() {
     for (const source of scheduled) {
       try {
