@@ -4,6 +4,7 @@
 import * as SpectralAnalysis from './spectral-analysis';
 import { ModulationAnalysis } from './modulation-analysis';
 import { connectVisualizer } from './connection';
+import { aggregateValues, VISUALIZER_AGGREGATION_MS, VISUALIZER_WINDOWS_SECONDS } from './controls';
 function readStorage(key) {
   try {
     return localStorage.getItem(key);
@@ -72,8 +73,8 @@ export function mountVisualizer(root, device, router) {
     modulation = new ModulationAnalysis(),
     modulationField = document.createElement('canvas'),
     modulationFieldContext = modulationField.getContext('2d');
-  const windows = [.001, .002, .005, .01, .02, .043, .05, .1, .25, .5, 1, 2, 5, 10, 30, 60],
-    aggregates = [0, 4, 10, 20, 50, 100, 250, 500, 1000],
+  const windows = VISUALIZER_WINDOWS_SECONDS,
+    aggregates = VISUALIZER_AGGREGATION_MS,
     buffers = [.25, .5, 1, 2, 5];
   const welchSegments = [1, 2, 4, 8, 16];
   let view = 'wave',
@@ -888,17 +889,7 @@ registerProcessor('signal-meter', SignalMeter);
     shown.textContent = sampleTotal + ' · ' + seconds + ' s';
   }
   function aggregatedValues(values, rate) {
-    const ms = aggregates[+aggregate.value],
-      n = Math.max(1, Math.round(rate * ms / 1000));
-    if (n === 1) return values;
-    const out = new Float64Array(values.length);
-    let sum = 0;
-    for (let i = 0; i < values.length; i++) {
-      sum += values[i];
-      if (i >= n) sum -= values[i - n];
-      out[i] = sum / Math.min(n, i + 1);
-    }
-    return out;
+    return aggregateValues(values, rate, aggregates[+aggregate.value]);
   }
   function fftData(endTime = ring.latestTime) {
     const selected = 2 ** Number(fftPower.value),

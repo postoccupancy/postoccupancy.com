@@ -10,6 +10,7 @@ export interface Channel {
   param: string;
   unit: string;
   ring: SampleRing;
+  sampleRate: number;
   receivedAt: number;
 }
 export interface NodeClock {
@@ -160,8 +161,12 @@ export class RouterClient {
       if (!channel) {
         // Bound metadata as well as each stream's sample history.
         if (this.channels.size >= 128) continue;
-        channel = { id, node: stream.name, param: stream.param, unit: typeof stream.unit === 'string' ? stream.unit : '', ring: new SampleRing(), receivedAt: now };
+        channel = { id, node: stream.name, param: stream.param, unit: typeof stream.unit === 'string' ? stream.unit : '', ring: new SampleRing(), sampleRate: 0, receivedAt: now };
         this.channels.set(id, channel);
+      }
+      if (samples.length > 1) {
+        const durationUs = samples[samples.length - 1][1] - samples[0][1];
+        if (durationUs > 0) channel.sampleRate = (samples.length - 1) * 1e6 / durationUs;
       }
       for (const [seq, t, v] of samples) channel.ring.push({ seq, t, v });
       channel.receivedAt = now;

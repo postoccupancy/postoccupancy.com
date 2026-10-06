@@ -1,11 +1,16 @@
 'use client';
 
+import { useState } from 'react';
 import Box from '@mui/material/Box';
+import Slider from '@mui/material/Slider';
 import Stack from '@mui/material/Stack';
+import ToggleButton from '@mui/material/ToggleButton';
+import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Typography from '@mui/material/Typography';
 import { useSettings } from '@/components/settings/settings-provider';
+import { formatAggregation, formatWindow, VISUALIZER_AGGREGATION_MS, VISUALIZER_WINDOWS_SECONDS } from '@/lib/visualizer/controls';
 import { useSignalRouter } from './router-provider';
-import { ScopePlot } from './scope-plot';
+import { SignalPlot, type SignalVisualization } from './signal-plot';
 
 // Presentation hints only: incoming metadata determines which channels exist.
 const labels: Record<string, string> = { temperature: 'Temperature', humidity: 'Humidity', pressure: 'Pressure', power: 'Power', 'solar-power': 'Solar input power', rms: 'Microphone RMS', 'solar-voltage': 'Solar voltage', 'solar-current': 'Solar current' };
@@ -16,6 +21,11 @@ const nodeLabel = (node: string) => node.split('-').map((part) => part.charAt(0)
 export function SignalsDashboard() {
   const router = useSignalRouter();
   const { presentationDelay } = useSettings();
+  const [visualization, setVisualization] = useState<SignalVisualization>('waveform');
+  const [windowIndex, setWindowIndex] = useState(13);
+  const [aggregationIndex, setAggregationIndex] = useState(0);
+  const windowSeconds = VISUALIZER_WINDOWS_SECONDS[windowIndex];
+  const aggregationMs = VISUALIZER_AGGREGATION_MS[aggregationIndex];
   const channels = [...router.channels.values()];
   channels.sort((a, b) => {
     const nodeOrder = a.node.localeCompare(b.node);
@@ -31,9 +41,30 @@ export function SignalsDashboard() {
 
   return (
     <Box>
-      <Stack direction="row" spacing={1} sx={{ alignItems: 'baseline', mb: 3 }}>
-        <Typography role="status" aria-label="Connection status" variant="body2" sx={{ color: fresh && router.status === 'connected' ? 'primary.main' : 'text.secondary' }}>{status}</Typography>
-        <Typography variant="body2" color="text.secondary">· {Number(presentationDelay.toFixed(2))}s delay</Typography>
+      <Stack spacing={2.5} sx={{ mb: 3 }}>
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'baseline' }}>
+          <Typography role="status" aria-label="Connection status" variant="body2" sx={{ color: fresh && router.status === 'connected' ? 'primary.main' : 'text.secondary' }}>{status}</Typography>
+          <Typography variant="body2" color="text.secondary">· {Number(presentationDelay.toFixed(2))}s delay</Typography>
+        </Stack>
+        <ToggleButtonGroup exclusive size="small" value={visualization} aria-label="Visualization type" onChange={(_, value: SignalVisualization | null) => { if (value) setVisualization(value); }} sx={{ alignSelf: 'flex-start', flexWrap: 'wrap' }}>
+          {(['waveform', 'spectrum', 'spectrogram', 'modulation'] as const).map((view) => <ToggleButton key={view} value={view} aria-label={view}>{view}</ToggleButton>)}
+        </ToggleButtonGroup>
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: { xs: 2, md: 4 }, maxWidth: 900 }}>
+          <Box>
+            <Stack direction="row" sx={{ justifyContent: 'space-between' }}>
+              <Typography id="signals-time-window" variant="body2">Time window</Typography>
+              <Typography variant="body2" color="text.secondary">{formatWindow(windowSeconds)}</Typography>
+            </Stack>
+            <Slider aria-labelledby="signals-time-window" value={windowIndex} min={0} max={VISUALIZER_WINDOWS_SECONDS.length - 1} step={1} size="small" onChange={(_, value) => setWindowIndex(Number(value))} valueLabelDisplay="auto" valueLabelFormat={(value) => formatWindow(VISUALIZER_WINDOWS_SECONDS[value])} />
+          </Box>
+          <Box>
+            <Stack direction="row" sx={{ justifyContent: 'space-between' }}>
+              <Typography id="signals-aggregation" variant="body2">Aggregation</Typography>
+              <Typography variant="body2" color="text.secondary">{formatAggregation(aggregationMs)}</Typography>
+            </Stack>
+            <Slider aria-labelledby="signals-aggregation" value={aggregationIndex} min={0} max={VISUALIZER_AGGREGATION_MS.length - 1} step={1} size="small" onChange={(_, value) => setAggregationIndex(Number(value))} valueLabelDisplay="auto" valueLabelFormat={(value) => formatAggregation(VISUALIZER_AGGREGATION_MS[value])} />
+          </Box>
+        </Box>
       </Stack>
       {!channels.length && <Typography color="text.secondary">Waiting for signal channels. Plots appear as data arrives.</Typography>}
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -55,7 +86,7 @@ export function SignalsDashboard() {
                 </Stack>
                 <Typography component="output" aria-live="off" variant="body2" sx={{ fontVariantNumeric: 'tabular-nums', color: stale ? 'text.secondary' : 'text.primary' }}>{value}{stale && latest ? ' · stale' : ''}</Typography>
               </Stack>
-              <ScopePlot channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} color={colors[channel.param] || '#9bc9d8'} scale={scale} decimals={decimals} label={`${source} ${name}: ${value}. Last 10 seconds${stale ? ', stale data' : ''}.`} />
+              <SignalPlot channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} color={colors[channel.param] || '#9bc9d8'} scale={scale} decimals={decimals} visualization={visualization} windowSeconds={windowSeconds} aggregationMs={aggregationMs} label={`${source} ${name}: ${value}${stale ? ', stale data' : ''}.`} />
             </Box>
           );
         })}

@@ -1,5 +1,6 @@
 import { expect, test, type WebSocketRoute } from '@playwright/test';
 import { welchPsd, spectrumPoints } from '../src/lib/visualizer/spectral-analysis';
+import { aggregateValues, formatAggregation, VISUALIZER_AGGREGATION_MS, VISUALIZER_WINDOWS_SECONDS } from '../src/lib/visualizer/controls';
 
 const path = '/interfaces/spectral-visualizer';
 const temperature = 'osc/electric-sky/temperature';
@@ -135,6 +136,16 @@ test('reused Welch analysis locates a known tone and preserves its power', () =>
   expect(peak.frequency).toBe(64);
   const power = spectrum.power.reduce((sum: number, value: number) => sum + value, 0) * spectrum.resolution;
   expect(power).toBeCloseTo(0.5, 2);
+});
+
+test('dashboard and visualizer share window stops and rolling aggregation', () => {
+  expect(VISUALIZER_WINDOWS_SECONDS).toEqual([.001, .002, .005, .01, .02, .043, .05, .1, .25, .5, 1, 2, 5, 10, 30, 60]);
+  expect(VISUALIZER_AGGREGATION_MS).toEqual([0, 4, 10, 20, 50, 100, 250, 500, 1000]);
+  expect(formatAggregation(0)).toBe('native');
+  expect(formatAggregation(4)).toBe('250.0 Hz');
+  expect(formatAggregation(1000)).toBe('1.0 Hz');
+  expect([...aggregateValues([1, 3, 5, 7], 100, 20)]).toEqual([1, 2, 4, 6]);
+  expect([...aggregateValues([1, 3, 5], 100, 0)]).toEqual([1, 3, 5]);
 });
 
 test('starts audio only on request and closes processing when the signal changes', async ({ page }) => {

@@ -60,6 +60,14 @@ Historical deployment context: removing `docs/` from `b2b-dashboard-demo/.vercel
 - `RouterInterface` now lives in the root router provider so its MIDI/OSC state is available to global settings and MIDI routing survives page navigation. It still releases resources when the provider unmounts.
 - These decisions replace the older Overview, separate node-dashboard, and page-local MIDI lifecycle notes below.
 
+## Signals visualization controls (2026-10-06)
+
+- Signals has one global visualization selector for waveform, spectrum, spectrogram, and modulation; all chart cards switch together and waveform remains the default.
+- Global time-window controls use the Electric Sea visualizer's exact 0.001–60 second stops. They set visible waveform/spectrogram time and the recent source interval used by spectrum/modulation analysis.
+- Global aggregation uses the visualizer's exact native/4/10/20/50/100/250/500/1000 ms rolling-average model. Signals presents those stops as native or equivalent hertz rounded to one decimal place.
+- `src/lib/visualizer/controls.ts` is the shared source for stops, labels, and rolling aggregation. Dashboard spectral views reuse `spectral-analysis.js` and `modulation-analysis.js`.
+- `SampleRing` retains up to 120 seconds while keeping its 25,000-sample cap so the 60-second view plus presentation delay remains available at current sensor rates.
+
 ## Navigation and layout decisions
 
 Overview is the home route `/`, reached through the **Post Occupancy** wordmark. It has no sidebar entry and no breadcrumb. All navigation groups are peers; Overview is not their parent. Breadcrumbs read, for example, `Lab / DSP for Artists`, never `Overview / Lab / DSP for Artists`.

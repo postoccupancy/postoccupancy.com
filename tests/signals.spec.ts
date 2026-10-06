@@ -29,6 +29,22 @@ test('discovers channels, converts power, and shares one socket across routes', 
   await expect(page.getByRole('region', { name: 'Electric Sky light level', exact: true })).toContainText('120.0000 lux');
   await expect(page.getByRole('region', { name: 'Indoor Sky Humidity', exact: true })).toContainText('45.0000 %');
   await expect(page.getByRole('region', { name: 'invalid', exact: true })).toHaveCount(0);
+  const charts = page.getByRole('img', { name: /view · 10 second window/ });
+  await expect(charts).toHaveCount(4);
+  await expect(charts.first()).toHaveAccessibleName(/waveform view/);
+  for (const view of ['spectrum', 'spectrogram', 'modulation', 'waveform']) {
+    await page.getByRole('button', { name: view, exact: true }).click();
+    await expect(charts.first()).toHaveAccessibleName(new RegExp(`${view} view`));
+  }
+  const timeWindow = page.getByRole('slider', { name: 'Time window', exact: true });
+  await timeWindow.focus(); await timeWindow.press('Home');
+  await expect(page.getByText('0.001 s', { exact: true }).first()).toBeVisible();
+  await timeWindow.press('End');
+  await expect(page.getByText('60 s', { exact: true }).first()).toBeVisible();
+  const aggregation = page.getByRole('slider', { name: 'Aggregation', exact: true });
+  await expect(page.getByText('native', { exact: true }).first()).toBeVisible();
+  await aggregation.focus(); await aggregation.press('End');
+  await expect(page.getByText('1.0 Hz', { exact: true }).first()).toBeVisible();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const delay = page.getByRole('slider', { name: /Presentation delay/ });
   await delay.focus(); await delay.press('Home');
