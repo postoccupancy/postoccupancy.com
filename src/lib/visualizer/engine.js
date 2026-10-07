@@ -22,7 +22,7 @@ function writeStorage(key, value) {
  * @param {string} device
  * @param {import('../signals/router-client').RouterClient} router
  * @param {import('../../components/settings/settings-provider').SignalAnalysisSettings} settings
- * @param {{audioOnly?: boolean}} [options]
+ * @param {{audioOnly?: boolean, compact?: boolean, height?: number}} [options]
  */
 export function mountVisualizer(root, device, router, settings, options = {}) {
   let disposed = false,
@@ -98,7 +98,8 @@ export function mountVisualizer(root, device, router, settings, options = {}) {
     lastSpectrum = null,
     lastModulation = null,
     modulationMissingCount = 0,
-    scalarFullScale = isPcm ? 0 : Number(readStorage(`rf.scalarFullScale.${device}`)) || 0;
+    scalarFullScale = isPcm ? 0 : Number(readStorage(`rf.scalarFullScale.${device}`)) || 0,
+    surfaceVisible = true;
   if (derivedMatch) {
     windowSeconds = 2;
     windowControl.value = 11;
@@ -208,7 +209,7 @@ export function mountVisualizer(root, device, router, settings, options = {}) {
   function resize() {
     const d = devicePixelRatio || 1,
       w = Math.max(1, root.clientWidth),
-      h = Math.max(280, Math.min(640, window.innerHeight * .55)),
+      h = options.height || Math.max(280, Math.min(640, window.innerHeight * .55)),
       pw = Math.floor(w * d),
       ph = Math.floor(h * d);
     if (canvas.width !== pw || canvas.height !== ph) {
@@ -222,6 +223,10 @@ export function mountVisualizer(root, device, router, settings, options = {}) {
   }
   const observer = new ResizeObserver(resize);
   observer.observe(root);
+  const visibilityObserver = new IntersectionObserver(entries => {
+    surfaceVisible = entries.some(entry => entry.isIntersecting);
+  });
+  if (options.compact) visibilityObserver.observe(root);
   resize();
   canvas.addEventListener('mousemove', event => {
     const rect = canvas.getBoundingClientRect(),
@@ -273,6 +278,9 @@ export function mountVisualizer(root, device, router, settings, options = {}) {
   windowControl.oninput = () => {
     windowSeconds = windows[+windowControl.value];
     windowValue.textContent = windowSeconds + ' s';
+    lastSpectro = Math.max(0, ring.latestTime - windowSeconds * 1e6);
+    sctx.clearRect(0, 0, spectro.width, spectro.height);
+    modulation.reset();
     if (waveformAnalyser) {
       const wanted = windowSeconds * audioCtx.sampleRate,
         power = Math.round(Math.log2(Math.max(32, Math.min(32768, wanted))));
@@ -283,6 +291,9 @@ export function mountVisualizer(root, device, router, settings, options = {}) {
     const ms = aggregates[+aggregate.value];
     aggregateValue.textContent = ms ? ms + ' ms' : 'off';
     resetAggregation();
+    lastSpectro = Math.max(0, ring.latestTime - windowSeconds * 1e6);
+    sctx.clearRect(0, 0, spectro.width, spectro.height);
+    modulation.reset();
     if (lowRateNode) lowRateNode.port.postMessage({
       type: 'config',
       aggregationMs: ms
@@ -895,17 +906,19 @@ registerProcessor('signal-meter', SignalMeter);
   }
   function fftData(endTime = ring.latestTime) {
     const selected = 2 ** Number(fftPower.value),
-      limit = welchSegments[+welchControl.value];
-    if (ring.sampleCount < 32) return null;
+      limit = welchSegments[+welchControl.value],
+      rate = spectralRate || sourceRate,
+      available = options.compact ? Math.min(ring.sampleCount, Math.max(0, Math.floor(rate * windowSeconds))) : ring.sampleCount;
+    if (available < 32) return null;
     let n = 32;
-    while (n * 2 <= selected && n * 2 <= ring.sampleCount) n *= 2;
+    while (n * 2 <= selected && n * 2 <= available) n *= 2;
     const hop = n / 2,
-      wanted = n + (limit - 1) * hop,
+      wanted = Math.min(available, n + (limit - 1) * hop),
       raw = endTime === ring.latestTime ? ring.lastValues(wanted) : ring.lastValuesBefore(wanted, endTime),
-      rate = spectralRate || sourceRate;
+      analysisRate = rate;
     if (raw.length < n) return null;
-    const values = aggregatedValues(raw, rate),
-      psd = SpectralAnalysis.welchPsd(values, rate, n, limit);
+    const values = aggregatedValues(raw, analysisRate),
+      psd = SpectralAnalysis.welchPsd(values, analysisRate, n, limit);
     if (!psd) return null;
     initializeScalarFullScale();
     const amplitudeReference = isPcm ? 1 : scalarFullScale || 1,
@@ -1026,22 +1039,19 @@ registerProcessor('signal-meter', SignalMeter);
   }
   function updateSpectrogram(s) {
     if (!s || !s.points.length) return;
-    const intervalUs = 1e6 / 30,
+    const columnWidth = Math.max(1, Math.round(devicePixelRatio || 1)),
+      intervalUs = Math.max(sourceRate ? 1e6 / sourceRate : 0, windowSeconds * 1e6 * columnWidth / Math.max(1, spectro.width)),
       latest = ring.latestTime;
-    if (!lastSpectro || latest < lastSpectro) {
-      lastSpectro = latest;
-      appendSpectrogramColumn(s);
-      return;
+    if (!lastSpectro || latest < lastSpectro || latest - lastSpectro > windowSeconds * 1e6) {
+      lastSpectro = Math.max(0, latest - windowSeconds * 1e6);
+      sctx.clearRect(0, 0, spectro.width, spectro.height);
     }
     let columns = Math.floor((latest - lastSpectro) / intervalUs);
     if (!columns) return;
-    if (columns > 60) {
-      lastSpectro = latest - 60 * intervalUs;
-      columns = 60;
-    }
+    columns = Math.min(columns, 8);
     for (let i = 0; i < columns; i++) {
       lastSpectro += intervalUs;
-      const historical = i === columns - 1 ? s : fftData(lastSpectro);
+      const historical = latest - lastSpectro < intervalUs ? s : fftData(lastSpectro);
       if (historical) appendSpectrogramColumn(historical);
     }
   }
@@ -1151,6 +1161,7 @@ registerProcessor('signal-meter', SignalMeter);
   function render(now) {
     if (disposed) return;
     animationFrame = requestAnimationFrame(render);
+    if (options.compact && !surfaceVisible) return;
     if (now - lastDraw < 1000 / 30) return;
     lastDraw = now;
     resize();
@@ -1240,6 +1251,7 @@ registerProcessor('signal-meter', SignalMeter);
     unsubscribe();
     cancelAnimationFrame(animationFrame);
     observer.disconnect();
+    visibilityObserver.disconnect();
     events.abort();
     closeAudio();
     for (const element of root.querySelectorAll('button,input,select')) element.onclick = element.oninput = element.onchange = null;

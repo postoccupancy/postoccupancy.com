@@ -62,9 +62,13 @@ Historical deployment context: removing `docs/` from `b2b-dashboard-demo/.vercel
 
 ## Signals visualization controls (2026-10-06)
 
+- Signals now renders each chart through a compact instance of the exact `VisualizerSurface`/`mountVisualizer` engine used by Spectral Visualizer; the former parallel dashboard renderer and DSP path were removed. Compact engines share the root RouterClient, retain their own bounded input rings, and do not remount for view/window/aggregation changes.
+- Compact charts perform no FFT or canvas work while offscreen. On return, the existing incremental spectrogram reconstructs retained history in bounded eight-column batches so acquisition and interaction can run between analysis work. Signals alone applies its global time window to spectrum/modulation input; the dedicated Spectral Visualizer retains its original FFT history semantics.
+- Reuse validation: lint, type checking, production build, and the nine focused Signals/visualizer tests pass serially. The six-stream interaction completes in about six seconds and verifies both nodes' spectrogram updates, all four views, aggregation/window changes, audio controls, navigation, and one shared socket.
+
 - Signals has one global visualization selector for waveform, spectrum, spectrogram, and modulation; all chart cards switch together and waveform remains the default.
 - Global time-window controls use the Electric Sea visualizer's exact 0.001–60 second stops. They set visible waveform/spectrogram time and the recent source interval used by spectrum/modulation analysis.
-- Global aggregation uses the visualizer's exact native/4/10/20/50/100/250/500/1000 ms stops, presented as native or equivalent hertz rounded to one decimal place. The dashboard now groups samples into occupied time buckets at the selected interval; the dedicated visualizer retains its rolling-average implementation.
+- Global aggregation uses the visualizer's exact native/4/10/20/50/100/250/500/1000 ms stops, presented as native or equivalent hertz rounded to one decimal place. Signals now uses the reused visualizer engine's rolling-average implementation.
 - `src/lib/visualizer/controls.ts` is the shared source for stops, labels, and rolling aggregation. Dashboard spectral views reuse `spectral-analysis.js` and `modulation-analysis.js`.
 - `SampleRing` retains up to 120 seconds while keeping its 25,000-sample cap so the 60-second view plus presentation delay remains available at current sensor rates.
 - FFT size, Welch segments, bands, smoothing, centroid, frequency scale, spectrum mode, and color palette are global under Settings → Signals and apply to both Signals charts and the dedicated visualizer. Preserve the original defaults except spectrum mode now defaults to the existing filtered calculation and is labeled `relative` in the interface.

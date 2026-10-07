@@ -26,4 +26,7 @@
 .surface footer span { color: #dce6ee; font-variant-numeric: tabular-nums; }
 .surface :global(.warning) { color: #ff846f; }
 .surface :global(.audio-error) { margin: 0; padding: 0 16px; color: #ff846f; }
+.compact { border: 0; border-radius: 0; }
+.compact header, .compact footer, .compact :global(.audio-error) { display: none; }
+.compact canvas { width: 100%; height: 170px; }
 @media (max-width: 900px) { .surface :global(.global-controls) { margin-left: 0; } }

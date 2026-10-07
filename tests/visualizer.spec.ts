@@ -1,10 +1,11 @@
-import { expect, test, type WebSocketRoute } from '@playwright/test';
+import { expect, test, type Page, type WebSocketRoute } from '@playwright/test';
 import { welchPsd, spectrumPoints } from '../src/lib/visualizer/spectral-analysis';
 import { aggregateSeries, aggregateValues, formatAggregation, VISUALIZER_AGGREGATION_MS, VISUALIZER_WINDOWS_SECONDS } from '../src/lib/visualizer/controls';
 
 const path = '/interfaces/spectral-visualizer';
 const temperature = 'osc/electric-sky/temperature';
 const humidity = 'osc/indoor-sky/humidity';
+const visualizer = (page: Page, selector: string) => page.locator(`[data-visualizer-surface="full"] ${selector}`);
 function batch(device: string, start = 100_000_000, sequence = 0) {
   const [, name, param] = device.split('/');
   return JSON.stringify({ type: 'sample_batch', sendTimeUs: start + 10_235_000,
@@ -35,8 +36,8 @@ test('selects discovered signals, plots all views, and keeps query history on on
   const selector = page.getByRole('combobox', { name: 'Signal', exact: true });
   await expect(selector).toHaveValue(temperature);
   sockets[0].send(batch(temperature));
-  await expect(page.locator('[data-viz=sourceStats]')).toContainText('200.0 Hz');
-  await expect(page.locator('[data-viz=shown]')).not.toHaveText('0');
+  await expect(visualizer(page, '[data-viz=sourceStats]')).toContainText('200.0 Hz');
+  await expect(visualizer(page, '[data-viz=shown]')).not.toHaveText('0');
   await expect(page.getByRole('main').getByRole('slider', { name: /FFT/ })).toHaveCount(0);
   await expect(page.getByRole('main').getByRole('checkbox', { name: 'Centroid' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
@@ -53,13 +54,15 @@ test('selects discovered signals, plots all views, and keeps query history on on
   await page.getByRole('combobox', { name: 'Color palette', exact: true }).click();
   await page.getByRole('option', { name: 'magma', exact: true }).click();
   await page.getByRole('button', { name: 'Close settings' }).click();
+  await expect(visualizer(page, '[data-viz=sourceStats]')).toHaveText('—');
   sockets[0].send(batch(temperature, 110_000_000, 2048));
+  await expect(visualizer(page, '[data-viz=sourceStats]')).toContainText('200.0 Hz');
   for (const name of ['spectrum', 'spectrogram', 'modulation', 'waveform']) {
     const button = page.getByRole('button', { name, exact: true });
     await button.click(); await expect(button).toHaveAttribute('aria-pressed', 'true');
     if (name === 'spectrum') {
-      await expect(page.locator('[data-viz=psdStats]')).toContainText('relative');
-      await expect(page.locator('[data-viz=centroidValue]')).toContainText('Hz');
+      await expect(visualizer(page, '[data-viz=psdStats]')).toContainText('relative');
+      await expect(visualizer(page, '[data-viz=centroidValue]')).toContainText('Hz');
       // Confirm plotted pixels, not just changing text labels.
       await expect.poll(() => page.locator('canvas').evaluate((canvas: HTMLCanvasElement) => {
         const pixels = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data;
@@ -70,11 +73,11 @@ test('selects discovered signals, plots all views, and keeps query history on on
   }
   await selector.selectOption(humidity);
   await expect(page).toHaveURL(new RegExp('device=osc%2Findoor-sky%2Fhumidity'));
-  await expect(page.locator('[data-viz=shown]')).toHaveText('0');
+  await expect(visualizer(page, '[data-viz=shown]')).toHaveText('0');
   sockets[0].send(batch(temperature, 120_000_000, 2048));
-  await expect(page.locator('[data-viz=shown]')).toHaveText('0');
+  await expect(visualizer(page, '[data-viz=shown]')).toHaveText('0');
   sockets[0].send(batch(humidity));
-  await expect(page.locator('[data-viz=shown]')).not.toHaveText('0');
+  await expect(visualizer(page, '[data-viz=shown]')).not.toHaveText('0');
   await page.goBack(); await expect(selector).toHaveValue(temperature);
   await page.goForward(); await expect(selector).toHaveValue(humidity);
   expect(sockets).toHaveLength(1);
@@ -151,7 +154,7 @@ test('reused Welch analysis locates a known tone and preserves its power', () =>
   expect(power).toBeCloseTo(0.5, 2);
 });
 
-test('dashboard and visualizer share stops while dashboard aggregation uses time buckets', () => {
+test('dashboard and visualizer share stops and aggregation helpers remain correct', () => {
   expect(VISUALIZER_WINDOWS_SECONDS).toEqual([.001, .002, .005, .01, .02, .043, .05, .1, .25, .5, 1, 2, 5, 10, 30, 60]);
   expect(VISUALIZER_AGGREGATION_MS).toEqual([0, 4, 10, 20, 50, 100, 250, 500, 1000]);
   expect(formatAggregation(0)).toBe('native');

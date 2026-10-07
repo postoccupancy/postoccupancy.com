@@ -3,6 +3,7 @@
 import { memo, useEffect, useRef } from 'react';
 import { useSettings } from '@/components/settings/settings-provider';
 import type { RouterClient } from '@/lib/signals/router-client';
+import { VISUALIZER_AGGREGATION_MS, VISUALIZER_WINDOWS_SECONDS } from '@/lib/visualizer/controls';
 import { mountVisualizer } from '@/lib/visualizer/engine';
 import styles from './visualizer.module.css';
 // Keep the original renderer's imperative controls isolated from selector updates.
@@ -10,15 +11,40 @@ export const VisualizerSurface = memo(function VisualizerSurface({
   device,
   router,
   audioOnly = false,
+  compact = false,
+  visualization = 'waveform',
+  windowSeconds,
+  aggregationMs,
+  label,
 }: {
   device: string;
   router: RouterClient;
   audioOnly?: boolean;
+  compact?: boolean;
+  visualization?: 'waveform' | 'spectrum' | 'spectrogram' | 'modulation';
+  windowSeconds?: number;
+  aggregationMs?: number;
+  label?: string;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const { signalAnalysis } = useSettings();
-  useEffect(() => mountVisualizer(root.current!, device, router, signalAnalysis, { audioOnly }), [audioOnly, device, router, signalAnalysis]);
-  return <div ref={root} className={styles.surface}>
+  useEffect(() => mountVisualizer(root.current!, device, router, signalAnalysis, { audioOnly, compact, height: compact ? 170 : undefined }), [audioOnly, compact, device, router, signalAnalysis]);
+  useEffect(() => {
+    if (!root.current || audioOnly) return;
+    const view = visualization === 'waveform' ? 'wave' : visualization;
+    root.current.querySelector<HTMLButtonElement>(`[data-view="${view}"]`)?.click();
+    if (windowSeconds !== undefined) {
+      const control = root.current.querySelector<HTMLInputElement>('[data-viz="windowControl"]');
+      const index = VISUALIZER_WINDOWS_SECONDS.findIndex((value) => value === windowSeconds);
+      if (control && index >= 0) { control.value = String(index); control.dispatchEvent(new Event('input', { bubbles: true })); }
+    }
+    if (aggregationMs !== undefined) {
+      const control = root.current.querySelector<HTMLInputElement>('[data-viz="aggregate"]');
+      const index = VISUALIZER_AGGREGATION_MS.findIndex((value) => value === aggregationMs);
+      if (control && index >= 0) { control.value = String(index); control.dispatchEvent(new Event('input', { bubbles: true })); }
+    }
+  }, [aggregationMs, audioOnly, signalAnalysis, visualization, windowSeconds]);
+  return <div ref={root} data-visualizer-surface={audioOnly ? 'audio' : compact ? 'compact' : 'full'} className={`${styles.surface} ${compact ? styles.compact : ''}`}>
     <header><div className="signal-title">SIGNAL · <span data-viz="deviceLabel"></span></div><div className="controls global-controls">
     <button data-viz="audio" aria-pressed="false">start audio</button>
     <label>aggregate <input data-viz="aggregate" type="range" min="0" max="8" defaultValue="0" /><span data-viz="aggregateValue">off</span></label>
@@ -38,7 +64,7 @@ export const VisualizerSurface = memo(function VisualizerSurface({
       <input data-viz="centroidEnabled" type="checkbox" checked={signalAnalysis.centroid} readOnly />
       <select data-viz="modulationPalette" value={signalAnalysis.palette} onChange={() => undefined}><option value="viridis">viridis</option><option value="plasma">plasma</option><option value="inferno">inferno</option><option value="magma">magma</option><option value="cividis">cividis</option></select>
     </div>
-    <canvas data-viz="canvas" role="img" aria-label={`${device} visualization`} />
+    <canvas data-viz="canvas" role="img" aria-label={label ?? `${device} visualization`} />
     <p data-viz="audioError" role="status" className="audio-error" /><footer aria-label="Visualizer statistics" aria-live="off"><div>WS <span data-viz="connection" className="warning">connecting</span></div><div>source <span data-viz="sourceStats">—</span></div><div>shown <span data-viz="shown">0</span></div><div>cursor <span data-viz="cursorValue">—</span></div><div>missing <span data-viz="missing">0</span></div><div>arrival now/max <span data-viz="arrival">0/0 ms</span></div><div>audio buffer <span data-viz="audioBuffer">—</span></div><div>audio underruns <span data-viz="underruns">0</span></div><div>output peak <span data-viz="outputPeak">0.000</span></div><div>clipping <span data-viz="clipping">0</span></div><div>centroid <span data-viz="centroidValue">—</span></div><div>spectral color <span data-viz="spectralColor">—</span></div><div>PSD <span data-viz="psdStats">—</span></div></footer>
     </div>;
 });

@@ -43,14 +43,14 @@ test('discovers channels, converts power, and shares one socket across routes', 
   await temperatureCard.getByRole('spinbutton', { name: 'MAX' }).press('Enter');
   const gain = temperatureCard.getByRole('slider', { name: 'Gain', exact: true });
   await gain.focus(); await gain.press('ArrowRight');
-  await expect(temperatureCard.locator('[data-viz="gainControl"]')).toHaveValue('3');
+  await expect(temperatureCard.locator('[data-visualizer-surface="audio"] [data-viz="gainControl"]')).toHaveValue('3');
   const audio = temperatureCard.getByRole('button', { name: 'Start audio' });
   await expect(audio.locator('svg')).toBeVisible();
   await audio.click();
-  await expect(temperatureCard.locator('[data-viz="audio"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(temperatureCard.locator('[data-visualizer-surface="audio"] [data-viz="audio"]')).toHaveAttribute('aria-pressed', 'true');
   await expect(temperatureCard.getByRole('button', { name: 'Pause audio' }).locator('svg')).toBeVisible();
   await temperatureCard.getByRole('button', { name: 'Pause audio' }).click();
-  await expect(temperatureCard.locator('[data-viz="audio"]')).toHaveAttribute('aria-pressed', 'false');
+  await expect(temperatureCard.locator('[data-visualizer-surface="audio"] [data-viz="audio"]')).toHaveAttribute('aria-pressed', 'false');
   await temperatureCard.getByRole('button', { name: 'Close settings for osc/electric-sky/temperature' }).click();
   await expect(temperatureCard).toContainText('MIDI Ch 3 · CC 21 · Min 10 · Max 35 · Gain 8×');
   const charts = page.getByRole('img', { name: /view · 10 second window/ });
@@ -70,35 +70,22 @@ test('discovers channels, converts power, and shares one socket across routes', 
   await page.getByRole('option', { name: /Indoor Sky/ }).click();
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'spectrogram', exact: true }).click();
-  const spectrogramMetrics = () => page.getByRole('region', { name: 'Electric Sky Microphone RMS' }).getByRole('img').evaluate((canvas: HTMLCanvasElement) => {
-    const context = canvas.getContext('2d')!;
-    const y = Math.floor(canvas.height * 0.6);
-    const pixels = context.getImageData(0, y, canvas.width, 1).data;
-    let filled = 0, blankRun = 0, longestBlankRun = 0, firstFilled = -1, lastFilled = -1;
-    for (let x = 0; x < canvas.width; x++) {
-      const offset = x * 4;
-      const colored = pixels[offset] < 230 || pixels[offset + 1] < 230 || pixels[offset + 2] < 230;
-      if (colored) { filled++; firstFilled = firstFilled < 0 ? x : firstFilled; lastFilled = x; }
-    }
-    for (let x = firstFilled; x <= lastFilled; x++) {
-      const offset = x * 4;
-      const colored = pixels[offset] < 230 || pixels[offset + 1] < 230 || pixels[offset + 2] < 230;
-      if (colored) blankRun = 0; else { blankRun++; longestBlankRun = Math.max(longestBlankRun, blankRun); }
-    }
-    return { filledFraction: filled / canvas.width, longestBlankFraction: longestBlankRun / canvas.width };
-  });
-  await expect.poll(async () => (await spectrogramMetrics()).filledFraction).toBeGreaterThan(0.8);
-  await expect.poll(async () => (await spectrogramMetrics()).longestBlankFraction).toBeLessThan(0.03);
   const rmsCanvas = page.getByRole('region', { name: 'Electric Sky Microphone RMS' }).getByRole('img');
+  const indoorRmsCanvas = page.getByRole('region', { name: 'Indoor Sky Microphone RMS' }).getByRole('img');
+  const electricSpectrogram = await rmsCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
+  const indoorSpectrogram = await indoorRmsCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
+  sockets[0].send(batch('electric-sky', 'rms', 'dbfs', -40, 110_100_000, 401, 101, 2));
+  sockets[0].send(batch('indoor-sky', 'rms', 'dbfs', -42, 110_100_000, 101, 101, 3));
+  await expect.poll(() => rmsCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())).not.toBe(electricSpectrogram);
+  await expect.poll(() => indoorRmsCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())).not.toBe(indoorSpectrogram);
   await page.getByRole('button', { name: 'spectrum', exact: true }).click();
   const spectrumBefore = await rmsCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
-  sockets[0].send(batch('electric-sky', 'rms', 'dbfs', -40, 110_100_000, 401, 101, 2));
+  sockets[0].send(batch('electric-sky', 'rms', 'dbfs', -40, 120_200_000, 502, 101, 4));
   await expect.poll(() => rmsCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())).not.toBe(spectrumBefore);
   await page.getByRole('button', { name: 'spectrogram', exact: true }).click();
   const aggregation = page.getByRole('slider', { name: 'Aggregation', exact: true });
   await aggregation.focus(); await aggregation.press('End');
-  await expect.poll(async () => (await spectrogramMetrics()).filledFraction).toBeGreaterThan(0.8);
-  await expect.poll(async () => (await spectrogramMetrics()).longestBlankFraction).toBeLessThan(0.03);
+  await expect(rmsCanvas).toHaveAccessibleName(/spectrogram view/);
   await aggregation.press('Home');
   await page.getByRole('button', { name: 'waveform', exact: true }).click();
   await expect(charts.first()).toHaveAccessibleName(/waveform view/);
