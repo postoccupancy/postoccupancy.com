@@ -2,7 +2,7 @@ export interface Sample { seq: number; t: number; v: number }
 
 // Adapted from electric-sky/esp32-s3-cam/include/Dashboard.h's Ring.
 // Retain at most 70 seconds / 25,000 samples, covering the 60-second waveform
-// window plus the default presentation delay.
+// window plus the maximum 10-second presentation delay.
 export class SampleRing {
   private samples: (Sample | undefined)[] = new Array(25_000);
   private head = 0;

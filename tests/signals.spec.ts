@@ -1,4 +1,5 @@
 import { expect, test, type WebSocketRoute } from '@playwright/test';
+import { aggregateWaveformSamples } from '../src/components/signals/scope-plot';
 import { SampleRing } from '../src/lib/signals/sample-ring';
 
 function batch(node: string, param: string, unit: string, value: number, start = 100_000_000, sequence = 0) {
@@ -18,6 +19,9 @@ test('discovers channels, converts power, and shares one socket across routes', 
     sockets.push(socket);
     socket.send(batch('electric-sky', 'temperature', 'celsius', 23.5));
     socket.send(batch('electric-sky', 'power', 'mw', 1250));
+    socket.send(batch('electric-sky', 'solar-power', 'mw', 750));
+    socket.send(batch('electric-sky', 'solar-voltage', 'volts', 5));
+    socket.send(batch('electric-sky', 'solar-current', 'ma', 150));
     socket.send(batch('electric-sky', 'light-level', 'lux', 120));
     socket.send(batch('indoor-sky', 'humidity', 'percent', 45));
     socket.send('{broken json');
@@ -26,16 +30,24 @@ test('discovers channels, converts power, and shares one socket across routes', 
   await page.goto('/');
   await expect(page.getByRole('region', { name: 'Electric Sky Temperature', exact: true })).toContainText('23.5000 °C');
   await expect(page.getByRole('region', { name: 'Electric Sky Power', exact: true })).toContainText('1.2500 W');
+  await expect(page.getByRole('region', { name: 'Electric Sky Solar input power', exact: true })).toContainText('0.7500 W');
+  await expect(page.getByRole('region', { name: /Solar voltage/i })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: /Solar current/i })).toHaveCount(0);
   await expect(page.getByRole('region', { name: 'Electric Sky light level', exact: true })).toContainText('120.0000 lux');
   await expect(page.getByRole('region', { name: 'Indoor Sky Humidity', exact: true })).toContainText('45.0000 %');
   await expect(page.getByRole('region', { name: 'invalid', exact: true })).toHaveCount(0);
   const temperature = page.getByRole('region', { name: 'Electric Sky Temperature', exact: true });
   await expect(page.getByRole('button', { name: 'Waveform', exact: true })).toHaveAttribute('aria-pressed', 'true');
   const timeWindow = page.getByRole('slider', { name: 'Time Window', exact: true });
+  const aggregation = page.getByRole('slider', { name: 'Aggregation', exact: true });
   await expect(timeWindow).toHaveValue('7');
-  await expect(page.getByRole('img', { name: /Last 10 seconds/ })).toHaveCount(4);
+  await expect(aggregation).toHaveValue('0');
+  await expect(page.getByRole('img', { name: /Last 10 seconds\. Aggregation Off/ })).toHaveCount(5);
   await timeWindow.focus(); await timeWindow.press('ArrowRight');
-  await expect(page.getByRole('img', { name: /Last 30 seconds/ })).toHaveCount(4);
+  await aggregation.focus();
+  for (let index = 0; index < 4; index++) await aggregation.press('ArrowRight');
+  await expect(timeWindow).toHaveValue('8');
+  await expect(page.getByRole('img', { name: /Last 30 seconds\. Aggregation 100 ms · 10\.0 Hz/ })).toHaveCount(5);
   await page.getByRole('button', { name: 'Spectrum', exact: true }).click();
   await expect(temperature.getByRole('img')).toHaveAccessibleName('Electric Sky Temperature spectrum placeholder');
   await expect(temperature).toContainText('Spectrum coming soon');
@@ -43,7 +55,9 @@ test('discovers channels, converts power, and shares one socket across routes', 
   await expect(temperature.getByRole('img')).toHaveAccessibleName('Electric Sky Temperature spectrogram placeholder');
   await expect(temperature).toContainText('Spectrogram coming soon');
   await page.getByRole('button', { name: 'Waveform', exact: true }).click();
-  await expect(page.getByRole('img', { name: /Last 30 seconds/ })).toHaveCount(4);
+  await expect(timeWindow).toHaveValue('8');
+  await expect(aggregation).toHaveValue('4');
+  await expect(page.getByRole('img', { name: /Last 30 seconds\. Aggregation 100 ms · 10\.0 Hz/ })).toHaveCount(5);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const delay = page.getByRole('slider', { name: /Presentation delay/ });
   await delay.focus(); await delay.press('Home');
@@ -59,6 +73,22 @@ test('discovers channels, converts power, and shares one socket across routes', 
   expect(errors).toEqual([]);
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.getByRole('main').evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+});
+
+test('waveform aggregation averages fixed buckets and leaves empty buckets absent', () => {
+  const observations = aggregateWaveformSamples([
+    { t: 10_000, v: 1 },
+    { t: 90_000, v: 3 },
+    { t: 110_000, v: 5 },
+    { t: 190_000, v: 7 },
+    { t: 310_000, v: 9 },
+  ], 100_000);
+
+  expect(observations).toEqual([
+    { bucket: 0, t: 50_000, v: 2 },
+    { bucket: 1, t: 150_000, v: 6 },
+    { bucket: 3, t: 350_000, v: 9 },
+  ]);
 });
 
 test('shows stale data, reconnects, and accepts a device clock reset', async ({ page }) => {

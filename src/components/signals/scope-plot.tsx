@@ -4,10 +4,39 @@ import { useEffect, useRef } from 'react';
 import Box from '@mui/material/Box';
 import type { Channel, NodeClock } from '@/lib/signals/router-client';
 
+export interface WaveformObservation { bucket: number; t: number; v: number }
+
+export function aggregateWaveformSamples(
+  samples: ReadonlyArray<{ t: number; v: number }>,
+  bucketUs: number,
+): WaveformObservation[] {
+  const observations: WaveformObservation[] = [];
+  let bucket = -1;
+  let sum = 0;
+  let count = 0;
+  const flush = () => {
+    if (!count) return;
+    observations.push({ bucket, t: (bucket + 0.5) * bucketUs, v: sum / count });
+  };
+  for (const sample of samples) {
+    const nextBucket = Math.floor(sample.t / bucketUs);
+    if (nextBucket !== bucket) {
+      flush();
+      bucket = nextBucket;
+      sum = 0;
+      count = 0;
+    }
+    sum += sample.v;
+    count += 1;
+  }
+  flush();
+  return observations;
+}
+
 // Port of draw() from electric-sky's Dashboard.h: min/max pixel bins preserve
 // high-rate peaks; empty bins break the line instead of hiding missing data.
-export function ScopePlot({ channel, clock, delay, color, scale, decimals, windowSeconds, label }: {
-  channel: Channel; clock?: NodeClock; delay: number; color: string; scale: number; decimals: number; windowSeconds: number; label: string;
+export function ScopePlot({ channel, clock, delay, color, scale, decimals, windowSeconds, aggregationMs, label }: {
+  channel: Channel; clock?: NodeClock; delay: number; color: string; scale: number; decimals: number; windowSeconds: number; aggregationMs: number; label: string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
@@ -42,7 +71,7 @@ export function ScopePlot({ channel, clock, delay, color, scale, decimals, windo
       }
       mins.fill(Infinity); maxs.fill(-Infinity); firstSequences.fill(-1); lastSequences.fill(-1); internalGaps.fill(0);
       let low = Infinity; let high = -Infinity;
-      channel.ring.visitRange(start, end, (sample) => {
+      const addObservation = (sample: { seq: number; t: number; v: number }) => {
         const value = sample.v * scale;
         low = Math.min(low, value); high = Math.max(high, value);
         const bin = Math.floor(sample.t / binUs) - firstBin;
@@ -52,7 +81,19 @@ export function ScopePlot({ channel, clock, delay, color, scale, decimals, windo
           lastSequences[bin] = sample.seq;
           mins[bin] = Math.min(mins[bin], value); maxs[bin] = Math.max(maxs[bin], value);
         }
-      });
+      };
+      if (aggregationMs === 0) {
+        channel.ring.visitRange(start, end, addObservation);
+      } else {
+        const aggregationUs = aggregationMs * 1000;
+        const samples: Array<{ t: number; v: number }> = [];
+        const aggregationStart = Math.floor(start / aggregationUs) * aggregationUs;
+        channel.ring.visitRange(aggregationStart, end, (sample) => samples.push(sample));
+        for (const observation of aggregateWaveformSamples(samples, aggregationUs)) {
+          if (observation.t < start || observation.t > end) continue;
+          addObservation({ seq: observation.bucket, t: observation.t, v: observation.v });
+        }
+      }
       context.strokeStyle = 'rgba(27, 37, 45, 0.05)'; context.lineWidth = ratio; context.beginPath();
       for (let i = 1; i < 4; i++) { context.moveTo(0, height * i / 4); context.lineTo(width, height * i / 4); }
       context.stroke();
@@ -89,6 +130,6 @@ export function ScopePlot({ channel, clock, delay, color, scale, decimals, windo
     }
     frame = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(frame);
-  }, [channel, clock, delay, color, scale, decimals, windowSeconds]);
+  }, [channel, clock, delay, color, scale, decimals, windowSeconds, aggregationMs]);
   return <Box component="canvas" ref={canvasRef} role="img" aria-label={label} sx={{ display: 'block', width: '100%', height: 170, bgcolor: 'whitesmoke' }} />;
 }
