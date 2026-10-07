@@ -37,7 +37,7 @@ function AssignmentInput({ signal, field, value, fallback, onChange }: {
     <Typography component="label" htmlFor={`${signal}-${field}`} variant="caption" color="text.secondary">{field.toUpperCase()}</Typography>
     <Box component="input" id={`${signal}-${field}`} type="number" key={String(shown)} defaultValue={shown}
       step="any" placeholder="—"
-      onBlur={(event) => { if (event.currentTarget.validity.valid) onChange(event.currentTarget.value); else event.currentTarget.value = String(shown); }}
+      onBlur={(event) => { if (event.currentTarget.validity.valid) { if (event.currentTarget.value !== String(shown)) onChange(event.currentTarget.value); } else event.currentTarget.value = String(shown); }}
       onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }}
       sx={{ display: 'block', width: '100%', mt: 0.5, p: 0.75, border: 1, borderColor: 'divider', borderRadius: 0.5, bgcolor: 'background.paper', color: 'text.primary', font: 'inherit' }} />
   </Box>;
@@ -52,7 +52,7 @@ export function SignalCard({ channel, clock, delay, color, scale, decimals, name
   const audioRoot = useRef<HTMLDivElement>(null);
   const router = useSignalRouter();
   const signal = `osc/${channel.node}/${channel.param}`;
-  const gainKey = `rf-signal-gain-${signal}`;
+  const gainKey = `rf-signal-audio-gain-v1-${signal}`;
   const [gainPower, setGainPower] = useState(2);
   const [customGain, setCustomGain] = useState(false);
   useEffect(() => {
@@ -61,7 +61,10 @@ export function SignalCard({ channel, clock, delay, color, scale, decimals, name
       if (!active) return;
       try {
         const saved = localStorage.getItem(gainKey);
-        if (saved !== null && Number.isFinite(Number(saved))) { setGainPower(Number(saved)); setCustomGain(true); }
+        if (saved !== null && saved.trim() !== '') {
+          const power = Number(saved);
+          if (Number.isInteger(power) && power >= -6 && power <= 15) { setGainPower(power); setCustomGain(power !== 2); }
+        }
       } catch {}
     });
     return () => { active = false; };
@@ -69,7 +72,7 @@ export function SignalCard({ channel, clock, delay, color, scale, decimals, name
   const model = useRouterInterface();
   const row = model.rows.get(signal);
   const assignment = row?.assignment ?? {};
-  const custom = [assignment.channel !== undefined && `MIDI Ch ${assignment.channel}`, assignment.cc !== undefined && `CC ${assignment.cc}`, assignment.min !== undefined && `Min ${assignment.min}`, assignment.max !== undefined && `Max ${assignment.max}`, customGain && `Gain ${gainLabel(gainPower)}`, playing && 'Audio playing'].filter(Boolean) as string[];
+  const custom = [assignment.channel !== undefined && `MIDI Ch ${assignment.channel}`, assignment.cc !== undefined && `CC ${assignment.cc}`, assignment.min !== undefined && assignment.min !== (row?.signal.min ?? 0) && `Min ${assignment.min}`, assignment.max !== undefined && assignment.max !== (row?.signal.max ?? 1) && `Max ${assignment.max}`, customGain && `Gain ${gainLabel(gainPower)}`, playing && 'Audio playing'].filter(Boolean) as string[];
   const audioMounted = expanded || playing;
 
   useEffect(() => {
@@ -92,8 +95,8 @@ export function SignalCard({ channel, clock, delay, color, scale, decimals, name
   }
 
   function updateGain(next: number) {
-    setGainPower(next); setCustomGain(true);
-    try { localStorage.setItem(gainKey, String(next)); } catch {}
+    setGainPower(next); setCustomGain(next !== 2);
+    try { if (next === 2) localStorage.removeItem(gainKey); else localStorage.setItem(gainKey, String(next)); } catch {}
     const gain = audioRoot.current?.querySelector<HTMLInputElement>('[data-viz="gainControl"]');
     if (gain) { gain.value = String(next); gain.dispatchEvent(new Event('input', { bubbles: true })); }
   }

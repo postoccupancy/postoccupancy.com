@@ -5,33 +5,6 @@ import * as SpectralAnalysis from './spectral-analysis';
 import { ModulationAnalysis } from './modulation-analysis';
 import { connectVisualizer } from './connection';
 import { aggregateValues, VISUALIZER_AGGREGATION_MS, VISUALIZER_WINDOWS_SECONDS } from './controls';
-const compactVisualizers = new Set();
-let compactFrame = 0,
-  compactLastPaint = 0,
-  compactLastAnalysis = 0;
-const COMPACT_PAINT_INTERVAL = 1000 / 30,
-  COMPACT_ANALYSIS_INTERVAL = 1000 / 5;
-function runCompactVisualizers(now) {
-  compactFrame = requestAnimationFrame(runCompactVisualizers);
-  const analyze = now - compactLastAnalysis >= COMPACT_ANALYSIS_INTERVAL,
-    paint = now - compactLastPaint >= COMPACT_PAINT_INTERVAL;
-  if (!analyze && !paint) return;
-  if (analyze) compactLastAnalysis = now;
-  if (paint) compactLastPaint = now;
-  for (const update of compactVisualizers) update({ analyze, paint, now });
-}
-function scheduleCompactVisualizer(update) {
-  compactVisualizers.add(update);
-  if (!compactFrame) compactFrame = requestAnimationFrame(runCompactVisualizers);
-  return () => {
-    compactVisualizers.delete(update);
-    if (!compactVisualizers.size && compactFrame) {
-      cancelAnimationFrame(compactFrame);
-      compactFrame = 0;
-      compactLastPaint = compactLastAnalysis = 0;
-    }
-  };
-}
 function readStorage(key) {
   try {
     return localStorage.getItem(key);
@@ -49,7 +22,7 @@ function writeStorage(key, value) {
  * @param {string} device
  * @param {import('../signals/router-client').RouterClient} router
  * @param {import('../../components/settings/settings-provider').SignalAnalysisSettings} settings
- * @param {{audioOnly?: boolean, compact?: boolean, height?: number}} [options]
+ * @param {{audioOnly?: boolean, height?: number}} [options]
  */
 export function mountVisualizer(root, device, router, settings, options = {}) {
   let disposed = false,
@@ -125,8 +98,7 @@ export function mountVisualizer(root, device, router, settings, options = {}) {
     lastSpectrum = null,
     lastModulation = null,
     modulationMissingCount = 0,
-    scalarFullScale = isPcm ? 0 : Number(readStorage(`rf.scalarFullScale.${device}`)) || 0,
-    surfaceVisible = true;
+    scalarFullScale = isPcm ? 0 : Number(readStorage(`rf.scalarFullScale.${device}`)) || 0;
   if (derivedMatch) {
     windowSeconds = 2;
     windowControl.value = 11;
@@ -250,10 +222,6 @@ export function mountVisualizer(root, device, router, settings, options = {}) {
   }
   const observer = new ResizeObserver(resize);
   observer.observe(root);
-  const visibilityObserver = new IntersectionObserver(entries => {
-    surfaceVisible = entries.some(entry => entry.isIntersecting);
-  });
-  if (options.compact) visibilityObserver.observe(root);
   resize();
   canvas.addEventListener('mousemove', event => {
     const rect = canvas.getBoundingClientRect(),
@@ -305,9 +273,6 @@ export function mountVisualizer(root, device, router, settings, options = {}) {
   windowControl.oninput = () => {
     windowSeconds = windows[+windowControl.value];
     windowValue.textContent = windowSeconds + ' s';
-    lastSpectro = Math.max(0, ring.latestTime - windowSeconds * 1e6);
-    sctx.clearRect(0, 0, spectro.width, spectro.height);
-    modulation.reset();
     if (waveformAnalyser) {
       const wanted = windowSeconds * audioCtx.sampleRate,
         power = Math.round(Math.log2(Math.max(32, Math.min(32768, wanted))));
@@ -318,9 +283,6 @@ export function mountVisualizer(root, device, router, settings, options = {}) {
     const ms = aggregates[+aggregate.value];
     aggregateValue.textContent = ms ? ms + ' ms' : 'off';
     resetAggregation();
-    lastSpectro = Math.max(0, ring.latestTime - windowSeconds * 1e6);
-    sctx.clearRect(0, 0, spectro.width, spectro.height);
-    modulation.reset();
     if (lowRateNode) lowRateNode.port.postMessage({
       type: 'config',
       aggregationMs: ms
@@ -839,14 +801,9 @@ registerProcessor('signal-meter', SignalMeter);
     }, `${seconds.toFixed(3)} s · ${a.length} AudioContext samples`);
     shown.textContent = a.length + ' · ' + seconds.toFixed(3) + ' s';
   }
-  function displayTime(now) {
-    if (!options.compact || !lastArrival) return ring.latestTime;
-    return ring.latestTime + Math.max(0, now - lastArrival) * 1000;
-  }
-  function drawSeries(seconds, now = performance.now()) {
+  function drawSeries(seconds) {
     const f = frame(),
-      end = displayTime(now),
-      start = end - seconds * 1e6,
+      start = ring.latestTime - seconds * 1e6,
       bins = Math.max(1, Math.floor(f.w)),
       binUs = seconds * 1e6 / bins,
       firstBin = Math.floor(start / binUs),
@@ -938,19 +895,17 @@ registerProcessor('signal-meter', SignalMeter);
   }
   function fftData(endTime = ring.latestTime) {
     const selected = 2 ** Number(fftPower.value),
-      limit = welchSegments[+welchControl.value],
-      rate = spectralRate || sourceRate,
-      available = options.compact ? Math.min(ring.sampleCount, Math.max(0, Math.floor(rate * windowSeconds))) : ring.sampleCount;
-    if (available < 32) return null;
+      limit = welchSegments[+welchControl.value];
+    if (ring.sampleCount < 32) return null;
     let n = 32;
-    while (n * 2 <= selected && n * 2 <= available) n *= 2;
+    while (n * 2 <= selected && n * 2 <= ring.sampleCount) n *= 2;
     const hop = n / 2,
-      wanted = Math.min(available, n + (limit - 1) * hop),
+      wanted = n + (limit - 1) * hop,
       raw = endTime === ring.latestTime ? ring.lastValues(wanted) : ring.lastValuesBefore(wanted, endTime),
-      analysisRate = rate;
+      rate = spectralRate || sourceRate;
     if (raw.length < n) return null;
-    const values = aggregatedValues(raw, analysisRate),
-      psd = SpectralAnalysis.welchPsd(values, analysisRate, n, limit);
+    const values = aggregatedValues(raw, rate),
+      psd = SpectralAnalysis.welchPsd(values, rate, n, limit);
     if (!psd) return null;
     initializeScalarFullScale();
     const amplitudeReference = isPcm ? 1 : scalarFullScale || 1,
@@ -1046,9 +1001,9 @@ registerProcessor('signal-meter', SignalMeter);
     spectrumAxis(f, s);
     waveformTime(f, `${s.resolution.toFixed(3)} Hz/bin · FFT ${s.n} · Welch ${s.segmentCount} · ${(s.rate / 2).toFixed(2)} Hz Nyquist`);
   }
-  function appendSpectrogramColumn(s, requestedWidth) {
+  function appendSpectrogramColumn(s) {
     const d = devicePixelRatio || 1,
-      col = Math.max(1, Math.min(spectro.width, requestedWidth || Math.round(d))),
+      col = Math.max(1, Math.round(d)),
       H = spectro.height,
       W = spectro.width;
     sctx.drawImage(spectro, col, 0, W - col, H, 0, 0, W - col, H);
@@ -1069,33 +1024,31 @@ registerProcessor('signal-meter', SignalMeter);
       sctx.fill();
     }
   }
-  function updateSpectrogram(s, cadence = 30) {
+  function updateSpectrogram(s) {
     if (!s || !s.points.length) return;
-    const columnWidth = Math.max(1, Math.round(devicePixelRatio || 1)),
-      intervalUs = Math.max(sourceRate ? 1e6 / sourceRate : 0, 1e6 / cadence),
+    const intervalUs = 1e6 / 30,
       latest = ring.latestTime;
     if (!lastSpectro || latest < lastSpectro) {
-      lastSpectro = Math.max(0, latest - windowSeconds * 1e6);
-      sctx.clearRect(0, 0, spectro.width, spectro.height);
+      lastSpectro = latest;
+      appendSpectrogramColumn(s);
+      return;
     }
     let columns = Math.floor((latest - lastSpectro) / intervalUs);
     if (!columns) return;
-    columns = Math.min(columns, 8);
+    if (columns > 60) {
+      lastSpectro = latest - 60 * intervalUs;
+      columns = 60;
+    }
     for (let i = 0; i < columns; i++) {
       lastSpectro += intervalUs;
-      const historical = latest - lastSpectro < intervalUs ? s : fftData(lastSpectro);
-      if (historical) appendSpectrogramColumn(historical, columnWidth);
+      const historical = i === columns - 1 ? s : fftData(lastSpectro);
+      if (historical) appendSpectrogramColumn(historical);
     }
-    root.dataset.spectrogramTime = String(lastSpectro);
   }
-  function drawSpectrogram(s, update = true, now = performance.now()) {
-    if (update) updateSpectrogram(s);
+  function drawSpectrogram(s) {
+    updateSpectrogram(s);
     const f = frame();
-    const d = devicePixelRatio || 1,
-      intervalUs = Math.max(sourceRate ? 1e6 / sourceRate : 0, 1e6 / 30),
-      columnWidth = Math.max(1, Math.round(d)),
-      offset = options.compact && lastSpectro ? Math.max(0, Math.min(columnWidth * 8, (displayTime(now) - lastSpectro) / intervalUs * columnWidth)) / d : 0;
-    ctx.drawImage(spectro, 0, 0, spectro.width, spectro.height, -offset, 0, f.w, f.h);
+    ctx.drawImage(spectro, 0, 0, spectro.width, spectro.height, 0, 0, f.w, f.h);
     if (s && s.points.length) {
       const c = centroidOf(s);
       centroidValue.textContent = centroidEnabled.checked ? c.toFixed(2) + ' Hz' : '—';
@@ -1195,45 +1148,33 @@ registerProcessor('signal-meter', SignalMeter);
     shown.textContent = `${modulation.frequencyBins}×${modulation.modulationBins + 1} · ${meta.historySeconds.toFixed(1)} s history`;
     psdStats.textContent = `FFT ${s.n}/${s.selected} · Welch ${s.segmentCount} · Δmod ${meta.modulationResolution.toFixed(3)} Hz · ${frameRate.toFixed(1)} spectra/s`;
   }
-  function maintainCompactSpectralHistory() {
-    const s = fftData();
-    lastSpectrum = s;
-    if (s) updateSpectrogram(s, 30);
-  }
-  function render(now, scheduled = true) {
+  function render(now) {
     if (disposed) return;
-    if (scheduled) animationFrame = requestAnimationFrame(render);
-    if (scheduled && now - lastDraw < 1000 / 30) return;
+    animationFrame = requestAnimationFrame(render);
+    if (now - lastDraw < 1000 / 30) return;
     lastDraw = now;
     resize();
     if (view === 'wave') {
       centroidValue.textContent = '—';
-      if (!options.compact) lastSpectrum = null;
+      lastSpectrum = null;
       lastModulation = null;
       spectralColor.textContent = '—';
       psdStats.textContent = '—';
-      if (audioOn && waveformAnalyser && windowSeconds * audioCtx.sampleRate <= 32768) drawPlaybackWaveform();else drawSeries(windowSeconds, now);
+      if (audioOn && waveformAnalyser && windowSeconds * audioCtx.sampleRate <= 32768) drawPlaybackWaveform();else drawSeries(windowSeconds);
     } else {
-      const s = scheduled ? fftData() : lastSpectrum;
-      if (scheduled) lastSpectrum = s;
-      if (scheduled && s) {
+      const s = fftData();
+      lastSpectrum = s;
+      if (s) {
         spectralColor.textContent = Number.isFinite(s.slope.alpha) ? `${s.slope.color} · α ${s.slope.alpha.toFixed(2)} · R² ${s.slope.r2.toFixed(2)}` : 'insufficient data';
         psdStats.textContent = `${s.segmentCount} segments · ${bandAverage.checked ? 'banded' : 'FFT bins'} · ${spectralMode === 'filtered' ? 'relative' : 'raw'}`;
       }
-      if (view === 'spectrum') drawSpectrum(s);else if (view === 'spectrogram') drawSpectrogram(s, scheduled, now);else drawModulation(s);
+      if (view === 'spectrum') drawSpectrum(s);else if (view === 'spectrogram') drawSpectrogram(s);else drawModulation(s);
     }
     sourceStats.textContent = sourceRate ? `${sourceRate.toFixed(1)} Hz · Nyquist ${((spectralRate || sourceRate) / 2).toFixed(1)} Hz` : '—';
     missing.textContent = missingCount;
     arrival.textContent = `${lastArrival ? (performance.now() - lastArrival).toFixed(0) : 0}/${maxArrival.toFixed(0)} ms`;
   }
-  let unscheduleCompact = () => {};
-  if (!options.audioOnly) {
-    if (options.compact) unscheduleCompact = scheduleCompactVisualizer(({ analyze, paint, now }) => {
-      if (disposed) return;
-      if (analyze) maintainCompactSpectralHistory();
-      if (paint && surfaceVisible) render(now, false);
-    });else animationFrame = requestAnimationFrame(render);
-  }
+  if (!options.audioOnly) animationFrame = requestAnimationFrame(render);
   function stopScheduled() {
     for (const source of scheduled) {
       try {
@@ -1273,7 +1214,6 @@ registerProcessor('signal-meter', SignalMeter);
     pcmSampleSequence = 0;
     missingCount = 0;
     lastArrival = maxArrival = lastSpectro = 0;
-    delete root.dataset.spectrogramTime;
     waveHover = [];
     lastSpectrum = lastModulation = null;
     modulation.reset();
@@ -1298,10 +1238,8 @@ registerProcessor('signal-meter', SignalMeter);
   return () => {
     disposed = true;
     unsubscribe();
-    unscheduleCompact();
     cancelAnimationFrame(animationFrame);
     observer.disconnect();
-    visibilityObserver.disconnect();
     events.abort();
     closeAudio();
     for (const element of root.querySelectorAll('button,input,select')) element.onclick = element.oninput = element.onchange = null;

@@ -48,7 +48,7 @@ test('selects discovered signals, plots all views, and keeps query history on on
   await expect(page.getByRole('checkbox', { name: 'Smooth', exact: true })).toBeChecked();
   await expect(page.getByRole('checkbox', { name: 'Centroid', exact: true })).not.toBeChecked();
   await expect(page.getByRole('button', { name: 'Frequency: log', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Spectrum: relative', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Spectrum: raw', exact: true })).toBeVisible();
   await expect(page.getByRole('combobox', { name: 'Color palette', exact: true })).toContainText('viridis');
   await page.getByRole('checkbox', { name: 'Centroid', exact: true }).check();
   await page.getByRole('combobox', { name: 'Color palette', exact: true }).click();
@@ -61,7 +61,7 @@ test('selects discovered signals, plots all views, and keeps query history on on
     const button = page.getByRole('button', { name, exact: true });
     await button.click(); await expect(button).toHaveAttribute('aria-pressed', 'true');
     if (name === 'spectrum') {
-      await expect(visualizer(page, '[data-viz=psdStats]')).toContainText('relative');
+      await expect(visualizer(page, '[data-viz=psdStats]')).toContainText('raw');
       await expect(visualizer(page, '[data-viz=centroidValue]')).toContainText('Hz');
       // Confirm plotted pixels, not just changing text labels.
       await expect.poll(() => page.locator('canvas').evaluate((canvas: HTMLCanvasElement) => {

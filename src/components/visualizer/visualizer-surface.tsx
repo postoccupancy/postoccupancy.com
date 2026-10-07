@@ -28,7 +28,7 @@ export const VisualizerSurface = memo(function VisualizerSurface({
 }) {
   const root = useRef<HTMLDivElement>(null);
   const { signalAnalysis } = useSettings();
-  useEffect(() => mountVisualizer(root.current!, device, router, signalAnalysis, { audioOnly, compact, height: compact ? 170 : undefined }), [audioOnly, compact, device, router, signalAnalysis]);
+  useEffect(() => mountVisualizer(root.current!, device, router, signalAnalysis, { audioOnly, height: compact ? 170 : undefined }), [audioOnly, compact, device, router, signalAnalysis]);
   useEffect(() => {
     if (!root.current || audioOnly) return;
     const view = visualization === 'waveform' ? 'wave' : visualization;
