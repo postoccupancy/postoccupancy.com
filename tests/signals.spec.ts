@@ -29,6 +29,17 @@ test('discovers channels, converts power, and shares one socket across routes', 
   await expect(page.getByRole('region', { name: 'Electric Sky light level', exact: true })).toContainText('120.0000 lux');
   await expect(page.getByRole('region', { name: 'Indoor Sky Humidity', exact: true })).toContainText('45.0000 %');
   await expect(page.getByRole('region', { name: 'invalid', exact: true })).toHaveCount(0);
+  const temperature = page.getByRole('region', { name: 'Electric Sky Temperature', exact: true });
+  await expect(page.getByRole('button', { name: 'Waveform', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(temperature.getByRole('img')).toHaveAccessibleName(/Last 10 seconds/);
+  await page.getByRole('button', { name: 'Spectrum', exact: true }).click();
+  await expect(temperature.getByRole('img')).toHaveAccessibleName('Electric Sky Temperature spectrum placeholder');
+  await expect(temperature).toContainText('Spectrum coming soon');
+  await page.getByRole('button', { name: 'Spectrogram', exact: true }).click();
+  await expect(temperature.getByRole('img')).toHaveAccessibleName('Electric Sky Temperature spectrogram placeholder');
+  await expect(temperature).toContainText('Spectrogram coming soon');
+  await page.getByRole('button', { name: 'Waveform', exact: true }).click();
+  await expect(temperature.getByRole('img')).toHaveAccessibleName(/Last 10 seconds/);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const delay = page.getByRole('slider', { name: /Presentation delay/ });
   await delay.focus(); await delay.press('Home');

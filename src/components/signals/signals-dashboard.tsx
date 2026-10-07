@@ -1,7 +1,10 @@
 'use client';
 
+import { useState } from 'react';
 import Box from '@mui/material/Box';
 import Stack from '@mui/material/Stack';
+import ToggleButton from '@mui/material/ToggleButton';
+import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Typography from '@mui/material/Typography';
 import { useSettings } from '@/components/settings/settings-provider';
 import { useSignalRouter } from './router-provider';
@@ -16,6 +19,7 @@ const nodeLabel = (node: string) => node.split('-').map((part) => part.charAt(0)
 export function SignalsDashboard() {
   const router = useSignalRouter();
   const { presentationDelay } = useSettings();
+  const [view, setView] = useState<'waveform' | 'spectrum' | 'spectrogram'>('waveform');
   const channels = [...router.channels.values()];
   channels.sort((a, b) => {
     const nodeOrder = a.node.localeCompare(b.node);
@@ -31,9 +35,16 @@ export function SignalsDashboard() {
 
   return (
     <Box>
-      <Stack direction="row" spacing={1} sx={{ alignItems: 'baseline', mb: 3 }}>
-        <Typography role="status" aria-label="Connection status" variant="body2" sx={{ color: fresh && router.status === 'connected' ? 'primary.main' : 'text.secondary' }}>{status}</Typography>
-        <Typography variant="body2" color="text.secondary">· {Number(presentationDelay.toFixed(2))}s delay</Typography>
+      <Stack spacing={2} sx={{ mb: 3 }}>
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'baseline' }}>
+          <Typography role="status" aria-label="Connection status" variant="body2" sx={{ color: fresh && router.status === 'connected' ? 'primary.main' : 'text.secondary' }}>{status}</Typography>
+          <Typography variant="body2" color="text.secondary">· {Number(presentationDelay.toFixed(2))}s delay</Typography>
+        </Stack>
+        <ToggleButtonGroup exclusive size="small" value={view} aria-label="Visualization view" onChange={(_, next) => { if (next) setView(next); }}>
+          <ToggleButton value="waveform">Waveform</ToggleButton>
+          <ToggleButton value="spectrum">Spectrum</ToggleButton>
+          <ToggleButton value="spectrogram">Spectrogram</ToggleButton>
+        </ToggleButtonGroup>
       </Stack>
       {!channels.length && <Typography color="text.secondary">Waiting for signal channels. Plots appear as data arrives.</Typography>}
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -55,7 +66,11 @@ export function SignalsDashboard() {
                 </Stack>
                 <Typography component="output" aria-live="off" variant="body2" sx={{ fontVariantNumeric: 'tabular-nums', color: stale ? 'text.secondary' : 'text.primary' }}>{value}{stale && latest ? ' · stale' : ''}</Typography>
               </Stack>
-              <ScopePlot channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} color={colors[channel.param] || '#9bc9d8'} scale={scale} decimals={decimals} label={`${source} ${name}: ${value}. Last 10 seconds${stale ? ', stale data' : ''}.`} />
+              {view === 'waveform'
+                ? <ScopePlot channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} color={colors[channel.param] || '#9bc9d8'} scale={scale} decimals={decimals} label={`${source} ${name}: ${value}. Last 10 seconds${stale ? ', stale data' : ''}.`} />
+                : <Box role="img" aria-label={`${source} ${name} ${view} placeholder`} sx={{ display: 'grid', placeItems: 'center', width: '100%', height: 170, bgcolor: 'whitesmoke', color: 'text.secondary' }}>
+                    <Typography variant="body2">{view === 'spectrum' ? 'Spectrum' : 'Spectrogram'} coming soon</Typography>
+                  </Box>}
             </Box>
           );
         })}

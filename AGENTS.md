@@ -55,6 +55,7 @@ Historical deployment context: removing `docs/` from `b2b-dashboard-demo/.vercel
 ## Phase 1 combined signals and global settings (2026-10-06)
 
 - `/` is the **Signals** dashboard and combines all discovered Electric Sky and Indoor Sky streams. Each chart identifies its node. The former node-specific routes redirect to `/`.
+- Dashboard v2 starts with a three-choice Waveform/Spectrum/Spectrogram selector. Waveform remains the unchanged `ScopePlot`; Spectrum and Spectrogram are plot-area placeholders pending later incremental implementation. No signal transport, buffering, timing, or DSP behavior changed in this step.
 - A Settings button at the bottom of the side rail opens the global settings modal. Categories currently include General, Signals, and Voices; General owns presentation delay, OSC UDP status, and Local MIDI ports.
 - Presentation delay defaults to six seconds, applies globally to all signal plots, and appears beside the dashboard live status.
 - `RouterInterface` now lives in the root router provider so its MIDI/OSC state is available to global settings and MIDI routing survives page navigation. It still releases resources when the provider unmounts.
