@@ -4,6 +4,7 @@
 import * as SpectralAnalysis from './spectral-analysis';
 import { ModulationAnalysis } from './modulation-analysis';
 import { connectVisualizer } from './connection';
+import { frequencyPosition } from './frequency-position';
 function readStorage(key) {
   try {
     return localStorage.getItem(key);
@@ -934,9 +935,8 @@ registerProcessor('signal-meter', SignalMeter);
   }
   function frequencyPositionHz(frequency, points) {
     const a = points[0].frequency,
-      b = points[points.length - 1].frequency,
-      x = (frequency - a) / (b - a);
-    return frequencyMode === 'expanded' ? Math.sqrt(Math.max(0, x)) : frequencyMode === 'log' ? Math.log(frequency / a) / Math.log(b / a) : x;
+      b = points[points.length - 1].frequency;
+    return frequencyPosition(frequency, a, b, frequencyMode);
   }
   function frequencyAtPosition(x, points) {
     const a = points[0].frequency,

@@ -2,6 +2,8 @@ import { expect, test, type WebSocketRoute } from '@playwright/test';
 import { aggregateWaveformSamples } from '../src/components/signals/scope-plot';
 import { SampleRing } from '../src/lib/signals/sample-ring';
 import { analyzeSpectrumRing, analyzeSpectrumSamples, prepareSpectrumSamples } from '../src/lib/signals/spectrum-analysis';
+import { defaultSpectralSettings } from '../src/lib/signals/spectral-settings';
+import { frequencyPosition } from '../src/lib/visualizer/frequency-position';
 
 function batch(node: string, param: string, unit: string, value: number, start = 100_000_000, sequence = 0) {
   return JSON.stringify({
@@ -62,6 +64,31 @@ test('discovers channels, converts power, and shares one socket across routes', 
   await expect(page.getByRole('img', { name: /Spectrum/ })).toHaveCount(10);
   await expect(page.locator('canvas[data-spectrum-rate="10"]')).toHaveCount(10);
   await expect(temperature.getByRole('img')).toHaveAttribute('data-spectrum-rate', '10');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Signals', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Spectral Analysis' })).toBeVisible();
+  const fftSize = page.getByRole('combobox', { name: 'FFT size' });
+  const welchSegments = page.getByRole('combobox', { name: 'Welch segments' });
+  const bandAverage = page.getByRole('switch', { name: 'Band averaging' });
+  const spectrumMode = page.getByRole('combobox', { name: 'Spectrum mode' });
+  const frequencyScale = page.getByRole('combobox', { name: 'Frequency scale' });
+  await expect(fftSize).toHaveText('Auto');
+  await expect(welchSegments).toHaveText('4');
+  await expect(bandAverage).toBeChecked();
+  await expect(spectrumMode).toHaveText('Relative');
+  await expect(frequencyScale).toHaveText('Log');
+  await expect(page.getByText('Welch overlap: 50% (fixed)')).toBeVisible();
+  await fftSize.click(); await page.getByRole('option', { name: '512', exact: true }).click();
+  await welchSegments.click(); await page.getByRole('option', { name: '1', exact: true }).click();
+  await bandAverage.uncheck();
+  await spectrumMode.click(); await page.getByRole('option', { name: 'Raw', exact: true }).click();
+  await frequencyScale.click(); await page.getByRole('option', { name: 'Linear', exact: true }).click();
+  await page.getByRole('button', { name: 'Close settings' }).click();
+  await expect(temperature.getByRole('img')).toHaveAttribute('data-spectrum-requested-fft', '512');
+  await expect(temperature.getByRole('img')).toHaveAttribute('data-spectrum-welch', '1');
+  await expect(temperature.getByRole('img')).toHaveAttribute('data-spectrum-bands', 'false');
+  await expect(temperature.getByRole('img')).toHaveAttribute('data-spectrum-mode', 'raw');
+  await expect(temperature.getByRole('img')).toHaveAttribute('data-spectrum-frequency-scale', 'linear');
   await page.getByRole('button', { name: 'Spectrogram', exact: true }).click();
   await expect(page.getByRole('img', { name: /spectrogram placeholder/ })).toHaveCount(10);
   await expect(temperature.getByRole('img')).toHaveAccessibleName('Electric Sky Temperature spectrogram placeholder');
@@ -71,6 +98,7 @@ test('discovers channels, converts power, and shares one socket across routes', 
   await expect(aggregation).toHaveValue('4');
   await expect(page.getByRole('img', { name: /Last 30 seconds\. Aggregation 100 ms · 10\.0 Hz/ })).toHaveCount(10);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'General', exact: true }).click();
   const delay = page.getByRole('slider', { name: /Presentation delay/ });
   await delay.focus(); await delay.press('Home');
   await expect(delay).toHaveValue('0.5');
@@ -143,6 +171,38 @@ test('signals spectrum reuses Welch analysis and locates a periodic peak', () =>
   for (const sample of samples.slice(0, 1201)) ring.push({ ...sample, t: sample.t + 100_000_000 });
   const buffered = analyzeSpectrumRing(ring, 76_000_000, 106_000_000, 100, 30)!;
   expect(buffered.effectiveSampleRate).toBe(10);
+});
+
+test('signals spectral configuration controls requested FFT, Welch, bands, and mode', () => {
+  const samples = Array.from({ length: 5200 }, (_, index) => ({
+    seq: index,
+    t: index * 10_000,
+    v: Math.sin(2 * Math.PI * 5 * index / 100),
+  }));
+  const fft512 = analyzeSpectrumSamples(samples, 0, 60, { ...defaultSpectralSettings, fftSize: 512 })!;
+  expect(fft512.requestedFftSize).toBe(512);
+  expect(fft512.fftLength).toBe(512);
+  expect(fft512.fftDurationSeconds).toBeCloseTo(5.12);
+
+  const fallback = analyzeSpectrumSamples(samples.slice(0, 600), 0, 10, { ...defaultSpectralSettings, fftSize: 2048 })!;
+  expect(fallback.requestedFftSize).toBe(2048);
+  expect(fallback.fftLength).toBe(512);
+
+  const requestedWelch = analyzeSpectrumSamples(samples, 0, 60, { ...defaultSpectralSettings, welchSegments: 16 })!;
+  expect(requestedWelch.welchSegmentCount).toBe(4);
+
+  const bands = analyzeSpectrumSamples(samples, 0, 60, defaultSpectralSettings)!;
+  const bins = analyzeSpectrumSamples(samples, 0, 60, { ...defaultSpectralSettings, bandAverage: false })!;
+  expect(bands.points.length).toBeLessThan(bins.points.length);
+  const raw = analyzeSpectrumSamples(samples, 0, 60, { ...defaultSpectralSettings, mode: 'raw' })!;
+  expect(Object.hasOwn(bands.points[0], 'rawPower')).toBe(true);
+  expect(Object.hasOwn(raw.points[0], 'rawPower')).toBe(false);
+});
+
+test('signals frequency scales use the visualizer positioning semantics', () => {
+  expect(frequencyPosition(10, 1, 100, 'log')).toBeCloseTo(0.5);
+  expect(frequencyPosition(10, 1, 100, 'linear')).toBeCloseTo(9 / 99);
+  expect(frequencyPosition(10, 1, 100, 'expanded')).toBeCloseTo(Math.sqrt(9 / 99));
 });
 
 test('shows stale data, reconnects, and accepts a device clock reset', async ({ page }) => {

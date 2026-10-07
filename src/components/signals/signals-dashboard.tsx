@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Box from '@mui/material/Box';
 import Slider from '@mui/material/Slider';
 import Stack from '@mui/material/Stack';
@@ -26,7 +26,15 @@ const aggregationLabel = (milliseconds: number) => milliseconds === 0
 
 export function SignalsDashboard() {
   const router = useSignalRouter();
-  const { presentationDelay } = useSettings();
+  const settings = useSettings();
+  const { presentationDelay } = settings;
+  const spectralSettings = useMemo(() => ({
+    fftSize: settings.spectralFftSize,
+    welchSegments: settings.spectralWelchSegments,
+    bandAverage: settings.spectralBandAverage,
+    mode: settings.spectralMode,
+    frequencyScale: settings.spectralFrequencyScale,
+  }), [settings.spectralFftSize, settings.spectralWelchSegments, settings.spectralBandAverage, settings.spectralMode, settings.spectralFrequencyScale]);
   const [view, setView] = useState<'waveform' | 'spectrum' | 'spectrogram'>('waveform');
   const [windowIndex, setWindowIndex] = useState(7);
   const [aggregationIndex, setAggregationIndex] = useState(0);
@@ -95,7 +103,7 @@ export function SignalsDashboard() {
                 <Typography component="output" aria-live="off" variant="body2" sx={{ fontVariantNumeric: 'tabular-nums', color: stale ? 'text.secondary' : 'text.primary' }}>{value}{stale && latest ? ' · stale' : ''}</Typography>
               </Stack>
               {view === 'waveform' && <ScopePlot channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} color={colors[channel.param] || '#9bc9d8'} scale={scale} decimals={decimals} windowSeconds={windowSeconds} aggregationMs={aggregationMs} label={`${source} ${name}: ${value}. Last ${windowSeconds} seconds. Aggregation ${aggregationLabel(aggregationMs)}${stale ? ', stale data' : ''}.`} />}
-              {view === 'spectrum' && <SpectrumPlot channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} color={colors[channel.param] || '#9bc9d8'} windowSeconds={windowSeconds} aggregationMs={aggregationMs} refreshKey={channel.receivedAt} label={`${source} ${name}`} />}
+              {view === 'spectrum' && <SpectrumPlot channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} color={colors[channel.param] || '#9bc9d8'} windowSeconds={windowSeconds} aggregationMs={aggregationMs} spectralSettings={spectralSettings} refreshKey={channel.receivedAt} label={`${source} ${name}`} />}
               {view === 'spectrogram' && <Box role="img" aria-label={`${source} ${name} spectrogram placeholder`} sx={{ display: 'grid', placeItems: 'center', width: '100%', height: 170, bgcolor: 'whitesmoke', color: 'text.secondary' }}>
                 <Typography variant="body2">Spectrogram coming soon</Typography>
               </Box>}

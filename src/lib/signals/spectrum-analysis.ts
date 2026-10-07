@@ -1,10 +1,10 @@
 import { aggregateWaveformSamples } from '@/components/signals/scope-plot';
 import type { Sample, SampleRing } from './sample-ring';
 import { filterBackground, logBandAverage, spectrumPoints, welchPsd } from '@/lib/visualizer/spectral-analysis';
+import { defaultSpectralSettings, type SpectralFftSize, type SpectralSettings } from './spectral-settings';
 
 const MIN_FFT_LENGTH = 8;
-const MAX_FFT_LENGTH = 2048;
-const WELCH_SEGMENTS = 4;
+const AUTO_MAX_FFT_LENGTH = 2048;
 
 export interface SpectrumObservation { key: number; t: number; v: number }
 export interface SpectrumPreparation {
@@ -12,6 +12,8 @@ export interface SpectrumPreparation {
   effectiveSampleRate: number;
   contiguousDurationSeconds: number;
   fftLength: number;
+  requestedFftSize: SpectralFftSize;
+  fftDurationSeconds: number;
 }
 export interface SignalsSpectrum extends SpectrumPreparation {
   requestedWindowSeconds: number;
@@ -19,6 +21,7 @@ export interface SignalsSpectrum extends SpectrumPreparation {
   resolution: number;
   points: Array<{ frequency: number; power: number; binCount: number }>;
   peakFrequency: number;
+  referencePsd: number;
 }
 
 function nativeInterval(samples: ReadonlyArray<Sample>) {
@@ -32,13 +35,13 @@ function nativeInterval(samples: ReadonlyArray<Sample>) {
   return intervals.length % 2 ? intervals[middle] : (intervals[middle - 1] + intervals[middle]) / 2;
 }
 
-function largestPowerOfTwo(value: number) {
+function largestPowerOfTwo(value: number, maximum: number) {
   let result = 1;
-  while (result * 2 <= value && result * 2 <= MAX_FFT_LENGTH) result *= 2;
+  while (result * 2 <= value && result * 2 <= maximum) result *= 2;
   return result;
 }
 
-export function prepareSpectrumSamples(samples: ReadonlyArray<Sample>, aggregationMs: number): SpectrumPreparation | null {
+export function prepareSpectrumSamples(samples: ReadonlyArray<Sample>, aggregationMs: number, requestedFftSize: SpectralFftSize = 'auto'): SpectrumPreparation | null {
   if (!samples.length) return null;
   let observations: SpectrumObservation[];
   let expectedUs: number;
@@ -70,7 +73,7 @@ export function prepareSpectrumSamples(samples: ReadonlyArray<Sample>, aggregati
 
   const selected = runs.reverse().find((candidate) => candidate.length >= MIN_FFT_LENGTH);
   if (!selected) return null;
-  const fftLength = largestPowerOfTwo(selected.length);
+  const fftLength = largestPowerOfTwo(selected.length, requestedFftSize === 'auto' ? AUTO_MAX_FFT_LENGTH : requestedFftSize);
   if (fftLength < MIN_FFT_LENGTH) return null;
   const effectiveSampleRate = aggregationMs > 0
     ? 1000 / aggregationMs
@@ -80,6 +83,8 @@ export function prepareSpectrumSamples(samples: ReadonlyArray<Sample>, aggregati
     effectiveSampleRate,
     contiguousDurationSeconds: (selected[selected.length - 1].t - selected[0].t) / 1e6,
     fftLength,
+    requestedFftSize,
+    fftDurationSeconds: fftLength / effectiveSampleRate,
   };
 }
 
@@ -87,6 +92,7 @@ export function analyzeSpectrumSamples(
   samples: ReadonlyArray<Sample>,
   aggregationMs: number,
   requestedWindowSeconds: number,
+  settings: SpectralSettings = defaultSpectralSettings,
   rangeStart = -Infinity,
   rangeEnd = Infinity,
 ): SignalsSpectrum | null {
@@ -98,15 +104,20 @@ export function analyzeSpectrumSamples(
       .map((sample) => sample.bucket));
     selectedSamples = samples.filter((sample) => includedBuckets.has(Math.floor(sample.t / bucketUs)));
   }
-  const prepared = prepareSpectrumSamples(selectedSamples, aggregationMs);
+  const prepared = prepareSpectrumSamples(selectedSamples, aggregationMs, settings.fftSize);
   if (!prepared) return null;
   const values = Float64Array.from(prepared.observations, (sample) => sample.v);
-  const psd = welchPsd(values, prepared.effectiveSampleRate, prepared.fftLength, WELCH_SEGMENTS, 0.5);
+  const psd = welchPsd(values, prepared.effectiveSampleRate, prepared.fftLength, settings.welchSegments, 0.5);
   if (!psd) return null;
   const fftPoints = spectrumPoints(psd);
-  const banded = logBandAverage(psd);
-  const points = filterBackground(banded.length >= 2 ? banded : fftPoints);
+  const banded = settings.bandAverage ? logBandAverage(psd) : fftPoints;
+  const rawPoints = banded.length >= 2 ? banded : fftPoints;
+  const points = settings.mode === 'relative' ? filterBackground(rawPoints) : rawPoints;
   const peak = fftPoints.reduce((best, point) => !best || point.power > best.power ? point : best, null as null | { frequency: number; power: number });
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  let observedPeak = 0;
+  for (const value of values) observedPeak = Math.max(observedPeak, Math.abs(value - mean));
+  const amplitudeReference = observedPeak ? observedPeak * 16 : 1;
   return {
     ...prepared,
     requestedWindowSeconds,
@@ -114,6 +125,7 @@ export function analyzeSpectrumSamples(
     resolution: psd.resolution,
     points,
     peakFrequency: peak?.frequency ?? 0,
+    referencePsd: psd.fullScaleSinePsd * amplitudeReference * amplitudeReference,
   };
 }
 
@@ -123,10 +135,11 @@ export function analyzeSpectrumRing(
   end: number,
   aggregationMs: number,
   requestedWindowSeconds: number,
+  settings: SpectralSettings = defaultSpectralSettings,
 ) {
   const samples: Sample[] = [];
   const aggregationUs = aggregationMs * 1000;
   const collectionStart = aggregationUs ? Math.floor(start / aggregationUs) * aggregationUs : start;
   ring.visitRange(collectionStart, end, (sample) => samples.push(sample));
-  return analyzeSpectrumSamples(samples, aggregationMs, requestedWindowSeconds, start, end);
+  return analyzeSpectrumSamples(samples, aggregationMs, requestedWindowSeconds, settings, start, end);
 }
