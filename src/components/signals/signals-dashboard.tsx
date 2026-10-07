@@ -18,6 +18,7 @@ import { formatAggregation, formatWindow, VISUALIZER_AGGREGATION_MS, VISUALIZER_
 import { useSignalRouter } from './router-provider';
 import { SignalCard } from './signal-card';
 import type { SignalVisualization } from './signal-plot';
+import { SignalsVisualizationProvider } from './signals-visualization';
 
 // Presentation hints only: incoming metadata determines which channels exist.
 const labels: Record<string, string> = { temperature: 'Temperature', humidity: 'Humidity', pressure: 'Pressure', power: 'Power', 'solar-power': 'Solar input power', rms: 'Microphone RMS', 'solar-voltage': 'Solar voltage', 'solar-current': 'Solar current' };
@@ -109,8 +110,9 @@ export function SignalsDashboard() {
         </Box>
       </Stack>
       {!channels.length && <Typography color="text.secondary">Waiting for signal channels. Plots appear as data arrives.</Typography>}
-      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {visibleChannels.map((channel) => {
+      <SignalsVisualizationProvider router={router} channels={channels} visualization={visualization} windowSeconds={windowSeconds} aggregationMs={aggregationMs} analysisSettings={signalAnalysis}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {visibleChannels.map((channel) => {
           const name = labels[channel.param] || channel.param.replaceAll('-', ' ');
           const source = nodeLabel(channel.node);
           const unit = units[channel.unit.toLowerCase()] ?? channel.unit;
@@ -120,8 +122,9 @@ export function SignalsDashboard() {
           const stale = channel.receivedAt === 0 || now - channel.receivedAt >= 5000 || router.status !== 'connected';
           const value = latest ? `${(latest.v * scale).toFixed(decimals)} ${unit}`.trim() : '—';
           return <SignalCard key={channel.id} channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} color={colors[channel.param] || '#9bc9d8'} scale={scale} decimals={decimals} name={name} source={source} value={value} stale={stale} visualization={visualization} windowSeconds={windowSeconds} aggregationMs={aggregationMs} analysisSettings={signalAnalysis} />;
-        })}
-      </Box>
+          })}
+        </Box>
+      </SignalsVisualizationProvider>
     </Box>
   );
 }

@@ -1,5 +1,6 @@
 import { expect, test, type WebSocketRoute } from '@playwright/test';
 import { SampleRing } from '../src/lib/signals/sample-ring';
+import { analyzeSpectrum } from '../src/lib/visualizer/analysis-core';
 
 function batch(node: string, param: string, unit: string, value: number, start = 100_000_000, sequence = 0, count = 101, waveDivisor = 8, oscillate = param === 'rms') {
   return JSON.stringify({
@@ -85,11 +86,18 @@ test('discovers channels, converts power, and shares one socket across routes', 
     ['electric-sky', 'humidity', 'percent', 44], ['electric-sky', 'pressure', 'hpa', 1012], ['electric-sky', 'solar-power', 'mw', 800],
     ['indoor-sky', 'humidity', 'percent', 45], ['indoor-sky', 'temperature', 'celsius', 22], ['indoor-sky', 'pressure', 'hpa', 1011], ['indoor-sky', 'power', 'mw', 900],
   ] as const) sockets[0].send(batch(node, param, unit, value, 110_100_000, 101, 101, 8, true));
-  const electricRmsSurface = page.getByRole('region', { name: 'Electric Sky Microphone RMS' }).locator('[data-visualizer-surface="compact"]');
-  await expect(electricRmsSurface.getByRole('img')).toHaveAccessibleName(/waveform view/);
+  const electricRmsSurface = page.getByRole('region', { name: 'Electric Sky Microphone RMS' }).getByRole('img');
+  await expect(electricRmsSurface).toHaveAccessibleName(/waveform view/);
   await page.getByRole('button', { name: 'spectrogram', exact: true }).click();
-  const compactSurfaces = page.locator('[data-visualizer-surface="compact"]');
+  const compactSurfaces = page.locator('[data-signals-lane]');
   await expect(compactSurfaces).toHaveCount(12);
+  await expect.poll(() => compactSurfaces.evaluateAll((canvases) => new Set(canvases.map((canvas) => (canvas as HTMLCanvasElement & { __signalsDisplayNow?: number }).__signalsDisplayNow)).size)).toBe(1);
+  const cropWindow = page.getByRole('slider', { name: 'Time window', exact: true });
+  await expect.poll(() => electricRmsSurface.evaluate((canvas: HTMLCanvasElement & { __spectrogramWindowColumns?: number }) => canvas.__spectrogramWindowColumns)).toBe(300);
+  await cropWindow.focus(); await cropWindow.press('End');
+  await expect.poll(() => electricRmsSurface.evaluate((canvas: HTMLCanvasElement & { __spectrogramWindowColumns?: number }) => canvas.__spectrogramWindowColumns)).toBe(1800);
+  await cropWindow.press('ArrowLeft'); await cropWindow.press('ArrowLeft');
+  await expect.poll(() => electricRmsSurface.evaluate((canvas: HTMLCanvasElement & { __spectrogramWindowColumns?: number }) => canvas.__spectrogramWindowColumns)).toBe(300);
   const rmsCanvas = page.getByRole('region', { name: 'Electric Sky Microphone RMS' }).getByRole('img');
   const indoorRmsCanvas = page.getByRole('region', { name: 'Indoor Sky Microphone RMS' }).getByRole('img');
   const electricSpectrogram = await rmsCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
@@ -169,4 +177,23 @@ test('sample rings stay bounded and do not duplicate or reorder samples', () => 
   ring.clear();
   ring.push({ seq: 0, t: 0, v: 1 });
   expect(ring.latest()?.v).toBe(1);
+});
+
+test('worker spectrum matches the frozen Electric Sea spectral pipeline', async ({ page }) => {
+  let socket!: WebSocketRoute;
+  await page.routeWebSocket('wss://rf.postoccupancy.com', (ws) => { socket = ws; });
+  await page.goto('/');
+  await expect(page.getByRole('status', { name: 'Connection status' })).toContainText('waiting for signals');
+  const samples = Array.from({ length: 2048 }, (_, index) => [index, 100_000_000 + index * 5000, Math.sin(2 * Math.PI * 10 * index / 200)]);
+  const message = JSON.stringify({ type: 'sample_batch', sendTimeUs: 110_235_000, streams: [{ name: 'electric-sky', param: 'humidity', unit: 'percent', samples }] });
+  socket.send(message);
+  const canvas = page.getByRole('region', { name: 'Electric Sky Humidity', exact: true }).getByRole('img');
+  await page.getByRole('button', { name: 'spectrum', exact: true }).click();
+  await expect.poll(() => canvas.getAttribute('data-analysis-n')).toBe('1024');
+  const values = Float32Array.from(samples.slice(-2001), (sample) => sample[2]);
+  const expected = analyzeSpectrum(values, 200, { fftPower: 11, welchSegments: 4, bands: true, spectrumMode: 'relative', sourceSampleCount: values.length })!;
+  const sum = expected.power.reduce((total: number, value: number) => total + value, 0);
+  const checksum = expected.power.reduce((total: number, value: number, index: number) => total + value * (index + 1), 0);
+  expect(Number(await canvas.getAttribute('data-analysis-power-sum'))).toBeCloseTo(sum, 12);
+  expect(Number(await canvas.getAttribute('data-analysis-power-checksum'))).toBeCloseTo(checksum, 12);
 });

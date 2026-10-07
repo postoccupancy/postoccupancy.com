@@ -1,10 +1,10 @@
 // Rendering, buffering, PCM decoding, and audio processing adapted from
 // signal-router/visualizer/index.html. Kept as JavaScript to preserve the existing
 // implementation; React owns the surrounding page, this module owns its surface.
-import * as SpectralAnalysis from './spectral-analysis';
 import { ModulationAnalysis } from './modulation-analysis';
 import { connectVisualizer } from './connection';
-import { aggregateValues, VISUALIZER_AGGREGATION_MS, VISUALIZER_WINDOWS_SECONDS } from './controls';
+import { VISUALIZER_AGGREGATION_MS, VISUALIZER_WINDOWS_SECONDS } from './controls';
+import { analyzeSpectrum } from './analysis-core';
 function readStorage(key) {
   try {
     return localStorage.getItem(key);
@@ -890,9 +890,6 @@ registerProcessor('signal-meter', SignalMeter);
     waveformTime(f, `${seconds.toFixed(3)} s · ${sampleTotal} samples`);
     shown.textContent = sampleTotal + ' · ' + seconds + ' s';
   }
-  function aggregatedValues(values, rate) {
-    return aggregateValues(values, rate, aggregates[+aggregate.value]);
-  }
   function fftData(endTime = ring.latestTime) {
     const selected = 2 ** Number(fftPower.value),
       limit = welchSegments[+welchControl.value];
@@ -904,26 +901,16 @@ registerProcessor('signal-meter', SignalMeter);
       raw = endTime === ring.latestTime ? ring.lastValues(wanted) : ring.lastValuesBefore(wanted, endTime),
       rate = spectralRate || sourceRate;
     if (raw.length < n) return null;
-    const values = aggregatedValues(raw, rate),
-      psd = SpectralAnalysis.welchPsd(values, rate, n, limit);
-    if (!psd) return null;
     initializeScalarFullScale();
-    const amplitudeReference = isPcm ? 1 : scalarFullScale || 1,
-      referencePsd = psd.fullScaleSinePsd * amplitudeReference * amplitudeReference,
-      rawPoints = bandAverage.checked ? SpectralAnalysis.logBandAverage(psd) : SpectralAnalysis.spectrumPoints(psd),
-      points = spectralMode === 'filtered' ? SpectralAnalysis.filterBackground(rawPoints) : rawPoints,
-      slope = SpectralAnalysis.estimateSpectralSlope(psd);
-    return {
-      ...psd,
-      points,
-      rawPoints,
-      slope,
-      rate,
-      n,
-      selected,
-      amplitudeReference,
-      referencePsd
-    };
+    return analyzeSpectrum(raw, rate, {
+      fftPower: Number(fftPower.value),
+      welchSegments: limit,
+      bands: bandAverage.checked,
+      spectrumMode: spectralMode,
+      aggregationMs: aggregates[+aggregate.value],
+      amplitudeReference: isPcm ? 1 : scalarFullScale || 1,
+      sourceSampleCount: ring.sampleCount
+    });
   }
   function frequencyPositionHz(frequency, points) {
     const a = points[0].frequency,

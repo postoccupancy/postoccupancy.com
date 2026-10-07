@@ -34,7 +34,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     smooth: true,
     centroid: false,
     frequencyScale: 'log',
-    spectrumMode: 'raw',
+    spectrumMode: 'relative',
     palette: 'viridis',
   });
   const value = useMemo(() => ({
