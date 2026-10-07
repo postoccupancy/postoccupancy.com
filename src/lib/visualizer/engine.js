@@ -18,7 +18,7 @@ function runCompactVisualizers(now) {
   if (!analyze && !paint) return;
   if (analyze) compactLastAnalysis = now;
   if (paint) compactLastPaint = now;
-  for (const update of compactVisualizers) update({ analyze, paint });
+  for (const update of compactVisualizers) update({ analyze, paint, now });
 }
 function scheduleCompactVisualizer(update) {
   compactVisualizers.add(update);
@@ -839,9 +839,14 @@ registerProcessor('signal-meter', SignalMeter);
     }, `${seconds.toFixed(3)} s · ${a.length} AudioContext samples`);
     shown.textContent = a.length + ' · ' + seconds.toFixed(3) + ' s';
   }
-  function drawSeries(seconds) {
+  function displayTime(now) {
+    if (!options.compact || !lastArrival) return ring.latestTime;
+    return ring.latestTime + Math.max(0, now - lastArrival) * 1000;
+  }
+  function drawSeries(seconds, now = performance.now()) {
     const f = frame(),
-      start = ring.latestTime - seconds * 1e6,
+      end = displayTime(now),
+      start = end - seconds * 1e6,
       bins = Math.max(1, Math.floor(f.w)),
       binUs = seconds * 1e6 / bins,
       firstBin = Math.floor(start / binUs),
@@ -1066,7 +1071,7 @@ registerProcessor('signal-meter', SignalMeter);
   }
   function updateSpectrogram(s, cadence = 30) {
     if (!s || !s.points.length) return;
-    const columnWidth = options.compact ? Math.max(1, Math.ceil(spectro.width / Math.max(1, windowSeconds * cadence))) : Math.max(1, Math.round(devicePixelRatio || 1)),
+    const columnWidth = Math.max(1, Math.round(devicePixelRatio || 1)),
       intervalUs = Math.max(sourceRate ? 1e6 / sourceRate : 0, 1e6 / cadence),
       latest = ring.latestTime;
     if (!lastSpectro || latest < lastSpectro) {
@@ -1083,10 +1088,14 @@ registerProcessor('signal-meter', SignalMeter);
     }
     root.dataset.spectrogramTime = String(lastSpectro);
   }
-  function drawSpectrogram(s, update = true) {
+  function drawSpectrogram(s, update = true, now = performance.now()) {
     if (update) updateSpectrogram(s);
     const f = frame();
-    ctx.drawImage(spectro, 0, 0, spectro.width, spectro.height, 0, 0, f.w, f.h);
+    const d = devicePixelRatio || 1,
+      intervalUs = Math.max(sourceRate ? 1e6 / sourceRate : 0, 1e6 / 30),
+      columnWidth = Math.max(1, Math.round(d)),
+      offset = options.compact && lastSpectro ? Math.max(0, Math.min(columnWidth * 8, (displayTime(now) - lastSpectro) / intervalUs * columnWidth)) / d : 0;
+    ctx.drawImage(spectro, 0, 0, spectro.width, spectro.height, -offset, 0, f.w, f.h);
     if (s && s.points.length) {
       const c = centroidOf(s);
       centroidValue.textContent = centroidEnabled.checked ? c.toFixed(2) + ' Hz' : '—';
@@ -1189,7 +1198,7 @@ registerProcessor('signal-meter', SignalMeter);
   function maintainCompactSpectralHistory() {
     const s = fftData();
     lastSpectrum = s;
-    if (s) updateSpectrogram(s, 5);
+    if (s) updateSpectrogram(s, 30);
   }
   function render(now, scheduled = true) {
     if (disposed) return;
@@ -1203,7 +1212,7 @@ registerProcessor('signal-meter', SignalMeter);
       lastModulation = null;
       spectralColor.textContent = '—';
       psdStats.textContent = '—';
-      if (audioOn && waveformAnalyser && windowSeconds * audioCtx.sampleRate <= 32768) drawPlaybackWaveform();else drawSeries(windowSeconds);
+      if (audioOn && waveformAnalyser && windowSeconds * audioCtx.sampleRate <= 32768) drawPlaybackWaveform();else drawSeries(windowSeconds, now);
     } else {
       const s = scheduled ? fftData() : lastSpectrum;
       if (scheduled) lastSpectrum = s;
@@ -1211,7 +1220,7 @@ registerProcessor('signal-meter', SignalMeter);
         spectralColor.textContent = Number.isFinite(s.slope.alpha) ? `${s.slope.color} · α ${s.slope.alpha.toFixed(2)} · R² ${s.slope.r2.toFixed(2)}` : 'insufficient data';
         psdStats.textContent = `${s.segmentCount} segments · ${bandAverage.checked ? 'banded' : 'FFT bins'} · ${spectralMode === 'filtered' ? 'relative' : 'raw'}`;
       }
-      if (view === 'spectrum') drawSpectrum(s);else if (view === 'spectrogram') drawSpectrogram(s, scheduled);else drawModulation(s);
+      if (view === 'spectrum') drawSpectrum(s);else if (view === 'spectrogram') drawSpectrogram(s, scheduled, now);else drawModulation(s);
     }
     sourceStats.textContent = sourceRate ? `${sourceRate.toFixed(1)} Hz · Nyquist ${((spectralRate || sourceRate) / 2).toFixed(1)} Hz` : '—';
     missing.textContent = missingCount;
@@ -1219,10 +1228,10 @@ registerProcessor('signal-meter', SignalMeter);
   }
   let unscheduleCompact = () => {};
   if (!options.audioOnly) {
-    if (options.compact) unscheduleCompact = scheduleCompactVisualizer(({ analyze, paint }) => {
+    if (options.compact) unscheduleCompact = scheduleCompactVisualizer(({ analyze, paint, now }) => {
       if (disposed) return;
       if (analyze) maintainCompactSpectralHistory();
-      if (paint && surfaceVisible) render(performance.now(), false);
+      if (paint && surfaceVisible) render(now, false);
     });else animationFrame = requestAnimationFrame(render);
   }
   function stopScheduled() {

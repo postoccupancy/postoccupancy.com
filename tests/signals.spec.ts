@@ -83,12 +83,29 @@ test('discovers channels, converts power, and shares one socket across routes', 
     ['electric-sky', 'humidity', 'percent', 44], ['electric-sky', 'pressure', 'hpa', 1012], ['electric-sky', 'solar-power', 'mw', 800],
     ['indoor-sky', 'humidity', 'percent', 45], ['indoor-sky', 'temperature', 'celsius', 22], ['indoor-sky', 'pressure', 'hpa', 1011], ['indoor-sky', 'power', 'mw', 900],
   ] as const) sockets[0].send(batch(node, param, unit, value, 110_100_000, 101, 101, 8, true));
+  const electricRmsSurface = page.getByRole('region', { name: 'Electric Sky Microphone RMS' }).locator('[data-visualizer-surface="compact"]');
+  await expect.poll(() => electricRmsSurface.evaluate(async (surface) => {
+    const canvas = surface.querySelector('canvas')!;
+    const before = canvas.toDataURL();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return canvas.toDataURL() !== before;
+  })).toBe(true);
   await page.getByRole('button', { name: 'spectrogram', exact: true }).click();
   const compactSurfaces = page.locator('[data-visualizer-surface="compact"]');
   await expect(compactSurfaces).toHaveCount(12);
   await expect.poll(() => compactSurfaces.evaluateAll((surfaces) => surfaces.map((surface) => Number((surface as HTMLElement).dataset.spectrogramTime || 0)).filter(Boolean).length)).toBe(12);
+  await expect.poll(() => compactSurfaces.evaluateAll((surfaces) => Math.min(...surfaces.map((surface) => Number((surface as HTMLElement).dataset.spectrogramTime || 0))))).toBeGreaterThanOrEqual(120_000_000);
   const synchronizedTimes = await compactSurfaces.evaluateAll((surfaces) => surfaces.map((surface) => Number((surface as HTMLElement).dataset.spectrogramTime)));
   expect(new Set(synchronizedTimes).size).toBe(1);
+  sockets[0].send(batch('electric-sky', 'rms', 'dbfs', -40, 120_200_000, 502, 3, 2));
+  await expect.poll(() => electricRmsSurface.evaluate((surface) => Number((surface as HTMLElement).dataset.spectrogramTime))).toBeGreaterThanOrEqual(120_400_000);
+  await expect.poll(() => electricRmsSurface.evaluate(async (surface) => {
+    const canvas = surface.querySelector('canvas')!;
+    const analysisTime = (surface as HTMLElement).dataset.spectrogramTime;
+    const before = canvas.toDataURL();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return (surface as HTMLElement).dataset.spectrogramTime === analysisTime && canvas.toDataURL() !== before;
+  })).toBe(true);
   const rmsCanvas = page.getByRole('region', { name: 'Electric Sky Microphone RMS' }).getByRole('img');
   const indoorRmsCanvas = page.getByRole('region', { name: 'Indoor Sky Microphone RMS' }).getByRole('img');
   const electricSpectrogram = await rmsCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
