@@ -5,6 +5,33 @@ import * as SpectralAnalysis from './spectral-analysis';
 import { ModulationAnalysis } from './modulation-analysis';
 import { connectVisualizer } from './connection';
 import { aggregateValues, VISUALIZER_AGGREGATION_MS, VISUALIZER_WINDOWS_SECONDS } from './controls';
+const compactVisualizers = new Set();
+let compactFrame = 0,
+  compactLastPaint = 0,
+  compactLastAnalysis = 0;
+const COMPACT_PAINT_INTERVAL = 1000 / 30,
+  COMPACT_ANALYSIS_INTERVAL = 1000 / 5;
+function runCompactVisualizers(now) {
+  compactFrame = requestAnimationFrame(runCompactVisualizers);
+  const analyze = now - compactLastAnalysis >= COMPACT_ANALYSIS_INTERVAL,
+    paint = now - compactLastPaint >= COMPACT_PAINT_INTERVAL;
+  if (!analyze && !paint) return;
+  if (analyze) compactLastAnalysis = now;
+  if (paint) compactLastPaint = now;
+  for (const update of compactVisualizers) update({ analyze, paint });
+}
+function scheduleCompactVisualizer(update) {
+  compactVisualizers.add(update);
+  if (!compactFrame) compactFrame = requestAnimationFrame(runCompactVisualizers);
+  return () => {
+    compactVisualizers.delete(update);
+    if (!compactVisualizers.size && compactFrame) {
+      cancelAnimationFrame(compactFrame);
+      compactFrame = 0;
+      compactLastPaint = compactLastAnalysis = 0;
+    }
+  };
+}
 function readStorage(key) {
   try {
     return localStorage.getItem(key);
@@ -1014,9 +1041,9 @@ registerProcessor('signal-meter', SignalMeter);
     spectrumAxis(f, s);
     waveformTime(f, `${s.resolution.toFixed(3)} Hz/bin · FFT ${s.n} · Welch ${s.segmentCount} · ${(s.rate / 2).toFixed(2)} Hz Nyquist`);
   }
-  function appendSpectrogramColumn(s) {
+  function appendSpectrogramColumn(s, requestedWidth) {
     const d = devicePixelRatio || 1,
-      col = Math.max(1, Math.round(d)),
+      col = Math.max(1, Math.min(spectro.width, requestedWidth || Math.round(d))),
       H = spectro.height,
       W = spectro.width;
     sctx.drawImage(spectro, col, 0, W - col, H, 0, 0, W - col, H);
@@ -1037,12 +1064,12 @@ registerProcessor('signal-meter', SignalMeter);
       sctx.fill();
     }
   }
-  function updateSpectrogram(s) {
+  function updateSpectrogram(s, cadence = 30) {
     if (!s || !s.points.length) return;
-    const columnWidth = Math.max(1, Math.round(devicePixelRatio || 1)),
-      intervalUs = Math.max(sourceRate ? 1e6 / sourceRate : 0, windowSeconds * 1e6 * columnWidth / Math.max(1, spectro.width)),
+    const columnWidth = options.compact ? Math.max(1, Math.ceil(spectro.width / Math.max(1, windowSeconds * cadence))) : Math.max(1, Math.round(devicePixelRatio || 1)),
+      intervalUs = Math.max(sourceRate ? 1e6 / sourceRate : 0, 1e6 / cadence),
       latest = ring.latestTime;
-    if (!lastSpectro || latest < lastSpectro || latest - lastSpectro > windowSeconds * 1e6) {
+    if (!lastSpectro || latest < lastSpectro) {
       lastSpectro = Math.max(0, latest - windowSeconds * 1e6);
       sctx.clearRect(0, 0, spectro.width, spectro.height);
     }
@@ -1052,11 +1079,12 @@ registerProcessor('signal-meter', SignalMeter);
     for (let i = 0; i < columns; i++) {
       lastSpectro += intervalUs;
       const historical = latest - lastSpectro < intervalUs ? s : fftData(lastSpectro);
-      if (historical) appendSpectrogramColumn(historical);
+      if (historical) appendSpectrogramColumn(historical, columnWidth);
     }
+    root.dataset.spectrogramTime = String(lastSpectro);
   }
-  function drawSpectrogram(s) {
-    updateSpectrogram(s);
+  function drawSpectrogram(s, update = true) {
+    if (update) updateSpectrogram(s);
     const f = frame();
     ctx.drawImage(spectro, 0, 0, spectro.width, spectro.height, 0, 0, f.w, f.h);
     if (s && s.points.length) {
@@ -1158,34 +1186,45 @@ registerProcessor('signal-meter', SignalMeter);
     shown.textContent = `${modulation.frequencyBins}×${modulation.modulationBins + 1} · ${meta.historySeconds.toFixed(1)} s history`;
     psdStats.textContent = `FFT ${s.n}/${s.selected} · Welch ${s.segmentCount} · Δmod ${meta.modulationResolution.toFixed(3)} Hz · ${frameRate.toFixed(1)} spectra/s`;
   }
-  function render(now) {
+  function maintainCompactSpectralHistory() {
+    const s = fftData();
+    lastSpectrum = s;
+    if (s) updateSpectrogram(s, 5);
+  }
+  function render(now, scheduled = true) {
     if (disposed) return;
-    animationFrame = requestAnimationFrame(render);
-    if (options.compact && !surfaceVisible) return;
-    if (now - lastDraw < 1000 / 30) return;
+    if (scheduled) animationFrame = requestAnimationFrame(render);
+    if (scheduled && now - lastDraw < 1000 / 30) return;
     lastDraw = now;
     resize();
     if (view === 'wave') {
       centroidValue.textContent = '—';
-      lastSpectrum = null;
+      if (!options.compact) lastSpectrum = null;
       lastModulation = null;
       spectralColor.textContent = '—';
       psdStats.textContent = '—';
       if (audioOn && waveformAnalyser && windowSeconds * audioCtx.sampleRate <= 32768) drawPlaybackWaveform();else drawSeries(windowSeconds);
     } else {
-      const s = fftData();
-      lastSpectrum = s;
-      if (s) {
+      const s = scheduled ? fftData() : lastSpectrum;
+      if (scheduled) lastSpectrum = s;
+      if (scheduled && s) {
         spectralColor.textContent = Number.isFinite(s.slope.alpha) ? `${s.slope.color} · α ${s.slope.alpha.toFixed(2)} · R² ${s.slope.r2.toFixed(2)}` : 'insufficient data';
         psdStats.textContent = `${s.segmentCount} segments · ${bandAverage.checked ? 'banded' : 'FFT bins'} · ${spectralMode === 'filtered' ? 'relative' : 'raw'}`;
       }
-      if (view === 'spectrum') drawSpectrum(s);else if (view === 'spectrogram') drawSpectrogram(s);else drawModulation(s);
+      if (view === 'spectrum') drawSpectrum(s);else if (view === 'spectrogram') drawSpectrogram(s, scheduled);else drawModulation(s);
     }
     sourceStats.textContent = sourceRate ? `${sourceRate.toFixed(1)} Hz · Nyquist ${((spectralRate || sourceRate) / 2).toFixed(1)} Hz` : '—';
     missing.textContent = missingCount;
     arrival.textContent = `${lastArrival ? (performance.now() - lastArrival).toFixed(0) : 0}/${maxArrival.toFixed(0)} ms`;
   }
-  if (!options.audioOnly) animationFrame = requestAnimationFrame(render);
+  let unscheduleCompact = () => {};
+  if (!options.audioOnly) {
+    if (options.compact) unscheduleCompact = scheduleCompactVisualizer(({ analyze, paint }) => {
+      if (disposed) return;
+      if (analyze) maintainCompactSpectralHistory();
+      if (paint && surfaceVisible) render(performance.now(), false);
+    });else animationFrame = requestAnimationFrame(render);
+  }
   function stopScheduled() {
     for (const source of scheduled) {
       try {
@@ -1225,6 +1264,7 @@ registerProcessor('signal-meter', SignalMeter);
     pcmSampleSequence = 0;
     missingCount = 0;
     lastArrival = maxArrival = lastSpectro = 0;
+    delete root.dataset.spectrogramTime;
     waveHover = [];
     lastSpectrum = lastModulation = null;
     modulation.reset();
@@ -1249,6 +1289,7 @@ registerProcessor('signal-meter', SignalMeter);
   return () => {
     disposed = true;
     unsubscribe();
+    unscheduleCompact();
     cancelAnimationFrame(animationFrame);
     observer.disconnect();
     visibilityObserver.disconnect();

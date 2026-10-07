@@ -1,11 +1,11 @@
 import { expect, test, type WebSocketRoute } from '@playwright/test';
 import { SampleRing } from '../src/lib/signals/sample-ring';
 
-function batch(node: string, param: string, unit: string, value: number, start = 100_000_000, sequence = 0, count = 101, waveDivisor = 8) {
+function batch(node: string, param: string, unit: string, value: number, start = 100_000_000, sequence = 0, count = 101, waveDivisor = 8, oscillate = param === 'rms') {
   return JSON.stringify({
     type: 'sample_batch', sendTimeUs: start + (count - 1) * 100_000,
     streams: [{ name: node, param, unit,
-      samples: Array.from({ length: count }, (_, i) => [sequence + i, start + i * 100_000, param === 'rms' ? value + Math.sin(i / waveDivisor) * 0.1 : value]),
+      samples: Array.from({ length: count }, (_, i) => [sequence + i, start + i * 100_000, oscillate ? value + Math.sin(i / waveDivisor) * 0.1 : value]),
     }],
   });
 }
@@ -22,6 +22,12 @@ test('discovers channels, converts power, and shares one socket across routes', 
     socket.send(batch('electric-sky', 'power', 'mw', 1250));
     socket.send(batch('electric-sky', 'light-level', 'lux', 120));
     socket.send(batch('indoor-sky', 'humidity', 'percent', 45));
+    socket.send(batch('electric-sky', 'humidity', 'percent', 44));
+    socket.send(batch('electric-sky', 'pressure', 'hpa', 1012));
+    socket.send(batch('electric-sky', 'solar-power', 'mw', 800));
+    socket.send(batch('indoor-sky', 'temperature', 'celsius', 22));
+    socket.send(batch('indoor-sky', 'pressure', 'hpa', 1011));
+    socket.send(batch('indoor-sky', 'power', 'mw', 900));
     socket.send('{broken json');
     socket.send(JSON.stringify({ type: 'sample_batch', streams: [null, { name: 'electric-sky', param: 'invalid', samples: [['bad', 1, 2]] }] }));
   });
@@ -54,7 +60,7 @@ test('discovers channels, converts power, and shares one socket across routes', 
   await temperatureCard.getByRole('button', { name: 'Close settings for osc/electric-sky/temperature' }).click();
   await expect(temperatureCard).toContainText('MIDI Ch 3 · CC 21 · Min 10 · Max 35 · Gain 8×');
   const charts = page.getByRole('img', { name: /view · 10 second window/ });
-  await expect(charts).toHaveCount(6);
+  await expect(charts).toHaveCount(12);
   const cards = page.locator('section[aria-label]');
   await expect(cards.nth(0)).toHaveAttribute('aria-label', 'Electric Sky Microphone RMS');
   await expect(cards.nth(1)).toHaveAttribute('aria-label', 'Indoor Sky Microphone RMS');
@@ -69,20 +75,45 @@ test('discovers channels, converts power, and shares one socket across routes', 
   await nodeFilter.click();
   await page.getByRole('option', { name: /Indoor Sky/ }).click();
   await page.keyboard.press('Escape');
+  await expect(page.getByRole('img', { name: /view · 10 second window/ })).toHaveCount(12);
+  sockets[0].send(batch('electric-sky', 'rms', 'dbfs', -40, 110_100_000, 401));
+  sockets[0].send(batch('indoor-sky', 'rms', 'dbfs', -42, 110_100_000, 101));
+  for (const [node, param, unit, value] of [
+    ['electric-sky', 'temperature', 'celsius', 23.5], ['electric-sky', 'power', 'mw', 1250], ['electric-sky', 'light-level', 'lux', 120],
+    ['electric-sky', 'humidity', 'percent', 44], ['electric-sky', 'pressure', 'hpa', 1012], ['electric-sky', 'solar-power', 'mw', 800],
+    ['indoor-sky', 'humidity', 'percent', 45], ['indoor-sky', 'temperature', 'celsius', 22], ['indoor-sky', 'pressure', 'hpa', 1011], ['indoor-sky', 'power', 'mw', 900],
+  ] as const) sockets[0].send(batch(node, param, unit, value, 110_100_000, 101, 101, 8, true));
   await page.getByRole('button', { name: 'spectrogram', exact: true }).click();
+  const compactSurfaces = page.locator('[data-visualizer-surface="compact"]');
+  await expect(compactSurfaces).toHaveCount(12);
+  await expect.poll(() => compactSurfaces.evaluateAll((surfaces) => surfaces.map((surface) => Number((surface as HTMLElement).dataset.spectrogramTime || 0)).filter(Boolean).length)).toBe(12);
+  const synchronizedTimes = await compactSurfaces.evaluateAll((surfaces) => surfaces.map((surface) => Number((surface as HTMLElement).dataset.spectrogramTime)));
+  expect(new Set(synchronizedTimes).size).toBe(1);
   const rmsCanvas = page.getByRole('region', { name: 'Electric Sky Microphone RMS' }).getByRole('img');
   const indoorRmsCanvas = page.getByRole('region', { name: 'Indoor Sky Microphone RMS' }).getByRole('img');
   const electricSpectrogram = await rmsCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
   const indoorSpectrogram = await indoorRmsCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
-  sockets[0].send(batch('electric-sky', 'rms', 'dbfs', -40, 110_100_000, 401, 101, 2));
-  sockets[0].send(batch('indoor-sky', 'rms', 'dbfs', -42, 110_100_000, 101, 101, 3));
+  sockets[0].send(batch('electric-sky', 'rms', 'dbfs', -40, 120_200_000, 502, 101, 2));
+  sockets[0].send(batch('indoor-sky', 'rms', 'dbfs', -42, 120_200_000, 202, 101, 3));
   await expect.poll(() => rmsCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())).not.toBe(electricSpectrogram);
   await expect.poll(() => indoorRmsCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())).not.toBe(indoorSpectrogram);
+  const beforeScroll = await compactSurfaces.evaluateAll((surfaces) => surfaces.map((surface) => Number((surface as HTMLElement).dataset.spectrogramTime)));
+  const lastCanvas = page.locator('section[aria-label]').last().getByRole('img');
+  const lastCanvasBeforeScroll = await lastCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
+  await page.locator('section[aria-label]').last().scrollIntoViewIfNeeded();
+  await expect.poll(() => lastCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())).not.toBe(lastCanvasBeforeScroll);
+  await temperatureCard.getByRole('button', { name: 'Open settings for osc/electric-sky/temperature' }).click();
+  await page.waitForTimeout(250);
+  const afterScroll = await compactSurfaces.evaluateAll((surfaces) => surfaces.map((surface) => Number((surface as HTMLElement).dataset.spectrogramTime)));
+  expect(afterScroll.every((time, index) => time >= beforeScroll[index])).toBe(true);
+  await temperatureCard.getByRole('button', { name: 'Close settings for osc/electric-sky/temperature' }).click();
   await page.getByRole('button', { name: 'spectrum', exact: true }).click();
   const spectrumBefore = await rmsCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
-  sockets[0].send(batch('electric-sky', 'rms', 'dbfs', -40, 120_200_000, 502, 101, 4));
+  sockets[0].send(batch('electric-sky', 'rms', 'dbfs', -40, 130_300_000, 603, 101, 4));
   await expect.poll(() => rmsCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())).not.toBe(spectrumBefore);
   await page.getByRole('button', { name: 'spectrogram', exact: true }).click();
+  const afterToggle = await compactSurfaces.evaluateAll((surfaces) => surfaces.map((surface) => Number((surface as HTMLElement).dataset.spectrogramTime)));
+  expect(afterToggle.every((time, index) => time >= afterScroll[index]), JSON.stringify({ afterScroll, afterToggle })).toBe(true);
   const aggregation = page.getByRole('slider', { name: 'Aggregation', exact: true });
   await aggregation.focus(); await aggregation.press('End');
   await expect(rmsCanvas).toHaveAccessibleName(/spectrogram view/);
@@ -110,8 +141,8 @@ test('discovers channels, converts power, and shares one socket across routes', 
   await page.getByRole('link', { name: 'Electric Sea', exact: true }).click();
   await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Resident Frequency', exact: true }).click();
   await page.getByRole('link', { name: 'Signals', exact: true }).click();
-  await expect(page.getByRole('region', { name: 'Indoor Sky Humidity', exact: true })).toContainText('45.0000 %');
-  await expect(page.getByRole('region', { name: 'Electric Sky Temperature', exact: true })).toContainText('23.5000 °C');
+  await expect(page.getByRole('region', { name: 'Indoor Sky Humidity', exact: true })).toContainText(/44\.99\d{2} %/);
+  await expect(page.getByRole('region', { name: 'Electric Sky Temperature', exact: true })).toContainText(/23\.49\d{2} °C/);
   expect(sockets).toHaveLength(1);
   expect(errors).toEqual([]);
   await page.setViewportSize({ width: 390, height: 844 });

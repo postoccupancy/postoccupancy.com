@@ -33,17 +33,23 @@ export const VisualizerSurface = memo(function VisualizerSurface({
     if (!root.current || audioOnly) return;
     const view = visualization === 'waveform' ? 'wave' : visualization;
     root.current.querySelector<HTMLButtonElement>(`[data-view="${view}"]`)?.click();
+  }, [audioOnly, signalAnalysis, visualization]);
+  useEffect(() => {
+    if (!root.current || audioOnly) return;
     if (windowSeconds !== undefined) {
       const control = root.current.querySelector<HTMLInputElement>('[data-viz="windowControl"]');
       const index = VISUALIZER_WINDOWS_SECONDS.findIndex((value) => value === windowSeconds);
       if (control && index >= 0) { control.value = String(index); control.dispatchEvent(new Event('input', { bubbles: true })); }
     }
+  }, [audioOnly, signalAnalysis, windowSeconds]);
+  useEffect(() => {
+    if (!root.current || audioOnly) return;
     if (aggregationMs !== undefined) {
       const control = root.current.querySelector<HTMLInputElement>('[data-viz="aggregate"]');
       const index = VISUALIZER_AGGREGATION_MS.findIndex((value) => value === aggregationMs);
       if (control && index >= 0) { control.value = String(index); control.dispatchEvent(new Event('input', { bubbles: true })); }
     }
-  }, [aggregationMs, audioOnly, signalAnalysis, visualization, windowSeconds]);
+  }, [aggregationMs, audioOnly, signalAnalysis]);
   return <div ref={root} data-visualizer-surface={audioOnly ? 'audio' : compact ? 'compact' : 'full'} className={`${styles.surface} ${compact ? styles.compact : ''}`}>
     <header><div className="signal-title">SIGNAL · <span data-viz="deviceLabel"></span></div><div className="controls global-controls">
     <button data-viz="audio" aria-pressed="false">start audio</button>
