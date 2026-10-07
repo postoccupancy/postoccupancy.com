@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Box from '@mui/material/Box';
+import Slider from '@mui/material/Slider';
 import Stack from '@mui/material/Stack';
 import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
@@ -15,11 +16,14 @@ const labels: Record<string, string> = { temperature: 'Temperature', humidity: '
 const colors: Record<string, string> = { temperature: '#66ddff', humidity: '#75ee99', pressure: '#dd99ff', power: '#ffcc66', 'solar-power': '#ff9f43', rms: '#ff6688' };
 const units: Record<string, string> = { celsius: '°C', percent: '%', hpa: 'hPa', dbfs: 'dBFS', volts: 'V', ma: 'mA', mw: 'W' };
 const nodeLabel = (node: string) => node.split('-').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
+const windowChoices = [.05, .1, .25, .5, 1, 2, 5, 10, 30, 60] as const;
 
 export function SignalsDashboard() {
   const router = useSignalRouter();
   const { presentationDelay } = useSettings();
   const [view, setView] = useState<'waveform' | 'spectrum' | 'spectrogram'>('waveform');
+  const [windowIndex, setWindowIndex] = useState(7);
+  const windowSeconds = windowChoices[windowIndex];
   const channels = [...router.channels.values()];
   channels.sort((a, b) => {
     const nodeOrder = a.node.localeCompare(b.node);
@@ -45,6 +49,14 @@ export function SignalsDashboard() {
           <ToggleButton value="spectrum">Spectrum</ToggleButton>
           <ToggleButton value="spectrogram">Spectrogram</ToggleButton>
         </ToggleButtonGroup>
+        <Box sx={{ maxWidth: 420 }}>
+          <Stack direction="row" sx={{ justifyContent: 'space-between' }}>
+            <Typography id="signals-time-window" variant="body2">Time Window</Typography>
+            <Typography variant="body2" color="text.secondary">{windowSeconds} s</Typography>
+          </Stack>
+          <Slider aria-labelledby="signals-time-window" value={windowIndex} min={0} max={windowChoices.length - 1} step={1} size="small"
+            onChange={(_, next) => setWindowIndex(Number(next))} valueLabelDisplay="auto" valueLabelFormat={(index) => `${windowChoices[index]} s`} />
+        </Box>
       </Stack>
       {!channels.length && <Typography color="text.secondary">Waiting for signal channels. Plots appear as data arrives.</Typography>}
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -67,7 +79,7 @@ export function SignalsDashboard() {
                 <Typography component="output" aria-live="off" variant="body2" sx={{ fontVariantNumeric: 'tabular-nums', color: stale ? 'text.secondary' : 'text.primary' }}>{value}{stale && latest ? ' · stale' : ''}</Typography>
               </Stack>
               {view === 'waveform'
-                ? <ScopePlot channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} color={colors[channel.param] || '#9bc9d8'} scale={scale} decimals={decimals} label={`${source} ${name}: ${value}. Last 10 seconds${stale ? ', stale data' : ''}.`} />
+                ? <ScopePlot channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} color={colors[channel.param] || '#9bc9d8'} scale={scale} decimals={decimals} windowSeconds={windowSeconds} label={`${source} ${name}: ${value}. Last ${windowSeconds} seconds${stale ? ', stale data' : ''}.`} />
                 : <Box role="img" aria-label={`${source} ${name} ${view} placeholder`} sx={{ display: 'grid', placeItems: 'center', width: '100%', height: 170, bgcolor: 'whitesmoke', color: 'text.secondary' }}>
                     <Typography variant="body2">{view === 'spectrum' ? 'Spectrum' : 'Spectrogram'} coming soon</Typography>
                   </Box>}

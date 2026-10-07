@@ -1,7 +1,8 @@
 export interface Sample { seq: number; t: number; v: number }
 
 // Adapted from electric-sky/esp32-s3-cam/include/Dashboard.h's Ring.
-// Retain at most 25 seconds / 25,000 samples, including the presentation delay.
+// Retain at most 70 seconds / 25,000 samples, covering the 60-second waveform
+// window plus the default presentation delay.
 export class SampleRing {
   private samples: (Sample | undefined)[] = new Array(25_000);
   private head = 0;
@@ -23,7 +24,7 @@ export class SampleRing {
     this.count = Math.min(this.count + 1, this.samples.length);
     while (this.count > 0) {
       const oldest = (this.head - this.count + this.samples.length) % this.samples.length;
-      if (sample.t - this.samples[oldest]!.t <= 25_000_000) break;
+      if (sample.t - this.samples[oldest]!.t <= 70_000_000) break;
       this.samples[oldest] = undefined;
       this.count--;
     }

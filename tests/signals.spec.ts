@@ -31,7 +31,11 @@ test('discovers channels, converts power, and shares one socket across routes', 
   await expect(page.getByRole('region', { name: 'invalid', exact: true })).toHaveCount(0);
   const temperature = page.getByRole('region', { name: 'Electric Sky Temperature', exact: true });
   await expect(page.getByRole('button', { name: 'Waveform', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await expect(temperature.getByRole('img')).toHaveAccessibleName(/Last 10 seconds/);
+  const timeWindow = page.getByRole('slider', { name: 'Time Window', exact: true });
+  await expect(timeWindow).toHaveValue('7');
+  await expect(page.getByRole('img', { name: /Last 10 seconds/ })).toHaveCount(4);
+  await timeWindow.focus(); await timeWindow.press('ArrowRight');
+  await expect(page.getByRole('img', { name: /Last 30 seconds/ })).toHaveCount(4);
   await page.getByRole('button', { name: 'Spectrum', exact: true }).click();
   await expect(temperature.getByRole('img')).toHaveAccessibleName('Electric Sky Temperature spectrum placeholder');
   await expect(temperature).toContainText('Spectrum coming soon');
@@ -39,7 +43,7 @@ test('discovers channels, converts power, and shares one socket across routes', 
   await expect(temperature.getByRole('img')).toHaveAccessibleName('Electric Sky Temperature spectrogram placeholder');
   await expect(temperature).toContainText('Spectrogram coming soon');
   await page.getByRole('button', { name: 'Waveform', exact: true }).click();
-  await expect(temperature.getByRole('img')).toHaveAccessibleName(/Last 10 seconds/);
+  await expect(page.getByRole('img', { name: /Last 30 seconds/ })).toHaveCount(4);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const delay = page.getByRole('slider', { name: /Presentation delay/ });
   await delay.focus(); await delay.press('Home');
@@ -84,6 +88,15 @@ test('sample rings stay bounded and do not duplicate or reorder samples', () => 
   expect(values[0]).toBe(5000);
   ring.push({ seq: 20, t: 20_000, v: -1 });
   expect(ring.latest()?.v).toBe(29_999);
+  ring.clear();
+  for (let seq = 0; seq <= 70; seq++) ring.push({ seq, t: seq * 1_000_000, v: seq });
+  const retained: number[] = [];
+  ring.visitRange(0, Infinity, (sample) => retained.push(sample.v));
+  expect(retained).toHaveLength(71);
+  ring.push({ seq: 71, t: 71_000_000, v: 71 });
+  const trimmed: number[] = [];
+  ring.visitRange(0, Infinity, (sample) => trimmed.push(sample.v));
+  expect(trimmed[0]).toBe(1);
   ring.clear();
   ring.push({ seq: 0, t: 0, v: 1 });
   expect(ring.latest()?.v).toBe(1);

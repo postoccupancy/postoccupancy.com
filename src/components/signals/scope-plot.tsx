@@ -6,8 +6,8 @@ import type { Channel, NodeClock } from '@/lib/signals/router-client';
 
 // Port of draw() from electric-sky's Dashboard.h: min/max pixel bins preserve
 // high-rate peaks; empty bins break the line instead of hiding missing data.
-export function ScopePlot({ channel, clock, delay, color, scale, decimals, label }: {
-  channel: Channel; clock?: NodeClock; delay: number; color: string; scale: number; decimals: number; label: string;
+export function ScopePlot({ channel, clock, delay, color, scale, decimals, windowSeconds, label }: {
+  channel: Channel; clock?: NodeClock; delay: number; color: string; scale: number; decimals: number; windowSeconds: number; label: string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
@@ -19,7 +19,10 @@ export function ScopePlot({ channel, clock, delay, color, scale, decimals, label
     let axisHigh = -Infinity;
     let mins = new Float32Array(0);
     let maxs = new Float32Array(0);
-    const windowUs = 10_000_000;
+    let firstSequences = new Float64Array(0);
+    let lastSequences = new Float64Array(0);
+    let internalGaps = new Uint8Array(0);
+    const windowUs = windowSeconds * 1_000_000;
     function draw(now: number) {
       if (!canvas || !context) return;
       const rect = canvas.getBoundingClientRect();
@@ -33,14 +36,22 @@ export function ScopePlot({ channel, clock, delay, color, scale, decimals, label
       const bins = Math.max(1, Math.ceil(width / 2));
       const binUs = windowUs / bins;
       const firstBin = Math.floor(start / binUs);
-      if (mins.length !== bins + 2) { mins = new Float32Array(bins + 2); maxs = new Float32Array(bins + 2); }
-      mins.fill(Infinity); maxs.fill(-Infinity);
+      if (mins.length !== bins + 2) {
+        mins = new Float32Array(bins + 2); maxs = new Float32Array(bins + 2);
+        firstSequences = new Float64Array(bins + 2); lastSequences = new Float64Array(bins + 2); internalGaps = new Uint8Array(bins + 2);
+      }
+      mins.fill(Infinity); maxs.fill(-Infinity); firstSequences.fill(-1); lastSequences.fill(-1); internalGaps.fill(0);
       let low = Infinity; let high = -Infinity;
       channel.ring.visitRange(start, end, (sample) => {
         const value = sample.v * scale;
         low = Math.min(low, value); high = Math.max(high, value);
         const bin = Math.floor(sample.t / binUs) - firstBin;
-        if (bin >= 0 && bin < mins.length) { mins[bin] = Math.min(mins[bin], value); maxs[bin] = Math.max(maxs[bin], value); }
+        if (bin >= 0 && bin < mins.length) {
+          if (firstSequences[bin] < 0) firstSequences[bin] = sample.seq;
+          else if (((sample.seq - lastSequences[bin]) >>> 0) !== 1) internalGaps[bin] = 1;
+          lastSequences[bin] = sample.seq;
+          mins[bin] = Math.min(mins[bin], value); maxs[bin] = Math.max(maxs[bin], value);
+        }
       });
       context.strokeStyle = 'rgba(27, 37, 45, 0.05)'; context.lineWidth = ratio; context.beginPath();
       for (let i = 1; i < 4; i++) { context.moveTo(0, height * i / 4); context.lineTo(width, height * i / 4); }
@@ -51,22 +62,25 @@ export function ScopePlot({ channel, clock, delay, color, scale, decimals, label
         axisHigh = Math.max(axisHigh, high + range * 0.12);
         context.strokeStyle = color; context.lineWidth = 2 * ratio; context.beginPath();
         let previous = -2;
+        let previousSequence = -1;
         for (let bin = 0; bin < mins.length; bin++) {
           if (mins[bin] === Infinity) continue;
+          if (internalGaps[bin]) { previous = -2; previousSequence = -1; continue; }
           const x = ((firstBin + bin + 0.5) * binUs - start) / windowUs * width;
           const y1 = height - (mins[bin] - axisLow) / (axisHigh - axisLow) * height;
           const y2 = height - (maxs[bin] - axisLow) / (axisHigh - axisLow) * height;
-          if (bin !== previous + 1) context.moveTo(x, y1); else context.lineTo(x, y1);
+          if (previous < 0 || ((firstSequences[bin] - previousSequence) >>> 0) !== 1) context.moveTo(x, y1); else context.lineTo(x, y1);
           // Isolated, low-rate samples must still leave a visible mark.
           context.lineTo(x, y2 === y1 ? y2 + ratio : y2);
           previous = bin;
+          previousSequence = lastSequences[bin];
         }
         context.stroke();
       }
       context.fillStyle = '#8ba0af'; context.font = `${10 * ratio}px monospace`;
       context.textBaseline = 'top'; context.textAlign = 'left';
       context.fillText(low === Infinity ? 'Waiting for buffered samples' : `max ${high.toFixed(decimals)}`, 5 * ratio, 4 * ratio);
-      context.textAlign = 'right'; context.fillText('time window 10s', width - 5 * ratio, 4 * ratio);
+      context.textAlign = 'right'; context.fillText(`time window ${windowSeconds}s`, width - 5 * ratio, 4 * ratio);
       if (low !== Infinity) {
         context.textBaseline = 'bottom'; context.textAlign = 'left'; context.fillText(`min ${low.toFixed(decimals)}`, 5 * ratio, height - 4 * ratio);
         context.textAlign = 'right'; context.fillText(`peak-to-peak ${(high - low).toFixed(decimals)}`, width - 5 * ratio, height - 4 * ratio);
@@ -75,6 +89,6 @@ export function ScopePlot({ channel, clock, delay, color, scale, decimals, label
     }
     frame = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(frame);
-  }, [channel, clock, delay, color, scale, decimals]);
+  }, [channel, clock, delay, color, scale, decimals, windowSeconds]);
   return <Box component="canvas" ref={canvasRef} role="img" aria-label={label} sx={{ display: 'block', width: '100%', height: 170, bgcolor: 'whitesmoke' }} />;
 }
