@@ -3,7 +3,7 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import type { Channel, NodeClock } from '@/lib/signals/router-client';
-import { analyzeSpectrogramBackfill, spectrogramHopUs, type SpectrogramColumn } from '@/lib/signals/spectrum-analysis';
+import { analyzeSpectrogramBackfill, MAX_ANALYSIS_INTERPOLATION_GAP_US, spectrogramHopUs, type SpectrogramColumn } from '@/lib/signals/spectrum-analysis';
 import type { SpectralFftSize, SpectralSettings } from '@/lib/signals/spectral-settings';
 
 const HISTORY_US = 65_000_000;
@@ -69,6 +69,17 @@ export function legacySpectrogramHsl(level: number) {
 
 export function newestSpectrogramEdgeEnd(lastColumnTimeUs: number, hopUs: number, presentationEndUs: number) {
   return Math.min(lastColumnTimeUs + hopUs, presentationEndUs);
+}
+
+export function spectrogramPresentationEdgeEnd(
+  lastColumnTimeUs: number,
+  hopUs: number,
+  presentationEndUs: number,
+  latestSourceTimeUs?: number,
+) {
+  return latestSourceTimeUs !== undefined && presentationEndUs - latestSourceTimeUs > MAX_ANALYSIS_INTERPOLATION_GAP_US
+    ? presentationEndUs
+    : newestSpectrogramEdgeEnd(lastColumnTimeUs, hopUs, presentationEndUs);
 }
 
 function frequencyAtPosition(position: number, first: number, last: number, scale: SpectralSettings['frequencyScale']) {
@@ -170,7 +181,9 @@ export const SpectrogramPlot = memo(function SpectrogramPlot({ channel, clock, d
     const finalHop = Math.floor(end / hopUs) * hopUs;
     let changed = rebuild;
     if (hop <= finalHop) {
-      const result = analyzeSpectrogramBackfill(samples, hop, finalHop, hopUs, aggregationMs, spectralSettings);
+      const result = analyzeSpectrogramBackfill(
+        samples, hop, finalHop, hopUs, aggregationMs, spectralSettings, historyRef.current.at(-1),
+      );
       historyRef.current.push(...result.columns);
       if (!frequencyBoundsRef.current && result.columns.length) {
         frequencyBoundsRef.current = spectrogramFrequencyBounds(result.columns[0], spectralSettings.fftSize);
@@ -229,7 +242,7 @@ export const SpectrogramPlot = memo(function SpectrogramPlot({ channel, clock, d
           context.drawImage(raster, left, 0, right - left, height);
           if (run === runs[runs.length - 1]) {
             const lastColumn = run.columns[run.columns.length - 1];
-            const stableEnd = newestSpectrogramEdgeEnd(lastColumn.timeUs, hopUs, end);
+            const stableEnd = spectrogramPresentationEdgeEnd(lastColumn.timeUs, hopUs, end, channel.ring.latest()?.t);
             if (stableEnd > run.endTimeUs) {
               const stableRight = (stableEnd - start) / windowUs * width;
               context.drawImage(raster, raster.width - 1, 0, 1, raster.height, right, 0, stableRight - right, height);
@@ -252,7 +265,7 @@ export const SpectrogramPlot = memo(function SpectrogramPlot({ channel, clock, d
     };
     frame = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(frame);
-  }, [aggregationMs, clock, delay, revision, frequencyScale, spectralMode, windowSeconds]);
+  }, [aggregationMs, channel, clock, delay, revision, frequencyScale, spectralMode, windowSeconds]);
 
   const latest = historyRef.current[historyRef.current.length - 1];
   const state = latest
@@ -262,6 +275,7 @@ export const SpectrogramPlot = memo(function SpectrogramPlot({ channel, clock, d
     data-spectrogram-columns={historyRef.current.length} data-spectrogram-hop-ms={spectrogramHopUs(aggregationMs) / 1000}
     data-spectrogram-fft={latest?.fftLength} data-spectrogram-requested-fft={spectralSettings.fftSize}
     data-spectrogram-welch={latest?.welchSegmentCount} data-spectrogram-rate={latest?.effectiveSampleRate}
+    data-spectrogram-quality={latest?.quality.status} data-spectrogram-reconstructed-fraction={latest?.quality.reconstructedFraction}
     data-spectrogram-peak={latest?.peakFrequency} data-spectrogram-bands={spectralSettings.bandAverage}
     data-spectrogram-mode={spectralSettings.mode} data-spectrogram-frequency-scale={spectralSettings.frequencyScale}
     data-spectrogram-first-time={historyRef.current[0]?.timeUs} data-spectrogram-last-time={latest?.timeUs}

@@ -3,7 +3,7 @@
 import { memo, useEffect, useMemo, useRef } from 'react';
 import Box from '@mui/material/Box';
 import type { Channel, NodeClock } from '@/lib/signals/router-client';
-import { analyzeSpectrumRing } from '@/lib/signals/spectrum-analysis';
+import { analyzeSpectrumRing, type SignalsSpectrum } from '@/lib/signals/spectrum-analysis';
 import type { SpectralSettings } from '@/lib/signals/spectral-settings';
 import { frequencyPosition } from '@/lib/visualizer/frequency-position';
 
@@ -19,12 +19,23 @@ export const SpectrumPlot = memo(function SpectrumPlot({ channel, clock, delay, 
   label: string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const spectrum = useMemo(() => {
+  const heldRef = useRef<{ key: string; spectrum: SignalsSpectrum | null }>({ key: '', spectrum: null });
+  const candidate = useMemo(() => {
     void refreshKey;
     if (!clock) return null;
     const end = clock.timeUs + (performance.now() - clock.atMs) * 1000 - delay * 1e6;
     return analyzeSpectrumRing(channel.ring, end - windowSeconds * 1e6, end, aggregationMs, windowSeconds, spectralSettings);
   }, [channel, clock, delay, windowSeconds, aggregationMs, spectralSettings, refreshKey]);
+  const holdKey = `${channel.id}/${clock?.generation ?? -1}/${windowSeconds}/${aggregationMs}/${spectralSettings.fftSize}/${spectralSettings.welchSegments}/${spectralSettings.bandAverage}/${spectralSettings.mode}`;
+  const spectrum = useMemo(() => {
+    if (heldRef.current.key !== holdKey) heldRef.current = { key: holdKey, spectrum: candidate };
+    else if (candidate && (!heldRef.current.spectrum || candidate.fftLength >= heldRef.current.spectrum.fftLength)) heldRef.current.spectrum = candidate;
+    return candidate && candidate === heldRef.current.spectrum
+      ? candidate
+      : heldRef.current.spectrum
+        ? { ...heldRef.current.spectrum, quality: { ...heldRef.current.spectrum.quality, status: 'held' as const } }
+        : null;
+  }, [candidate, holdKey]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -66,5 +77,5 @@ export const SpectrumPlot = memo(function SpectrumPlot({ channel, clock, delay, 
   const state = spectrum
     ? `${label}. Spectrum. ${spectrum.effectiveSampleRate.toFixed(1)} Hz. FFT ${spectrum.fftLength}. Welch ${spectrum.welchSegmentCount}. ${spectrum.contiguousDurationSeconds.toFixed(3)} seconds contiguous.`
     : `${label}. Spectrum. Insufficient contiguous data.`;
-  return <Box component="canvas" ref={canvasRef} role="img" aria-label={state} data-spectrum-fft={spectrum?.fftLength} data-spectrum-requested-fft={spectralSettings.fftSize} data-spectrum-rate={spectrum?.effectiveSampleRate} data-spectrum-peak={spectrum?.peakFrequency} data-spectrum-welch={spectrum?.welchSegmentCount} data-spectrum-bands={spectralSettings.bandAverage} data-spectrum-mode={spectralSettings.mode} data-spectrum-frequency-scale={spectralSettings.frequencyScale} sx={{ display: 'block', width: '100%', height: 170, bgcolor: 'whitesmoke' }} />;
+  return <Box component="canvas" ref={canvasRef} role="img" aria-label={state} data-spectrum-fft={spectrum?.fftLength} data-spectrum-requested-fft={spectralSettings.fftSize} data-spectrum-rate={spectrum?.effectiveSampleRate} data-spectrum-peak={spectrum?.peakFrequency} data-spectrum-welch={spectrum?.welchSegmentCount} data-spectrum-quality={spectrum?.quality.status} data-spectrum-reconstructed-fraction={spectrum?.quality.reconstructedFraction} data-spectrum-bands={spectralSettings.bandAverage} data-spectrum-mode={spectralSettings.mode} data-spectrum-frequency-scale={spectralSettings.frequencyScale} sx={{ display: 'block', width: '100%', height: 170, bgcolor: 'whitesmoke' }} />;
 });

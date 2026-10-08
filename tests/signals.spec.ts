@@ -1,6 +1,6 @@
 import { expect, test, type WebSocketRoute } from '@playwright/test';
 import { aggregateWaveformSamples } from '../src/components/signals/scope-plot';
-import { interpolateSpectrogramPower, legacySpectrogramHsl, newestSpectrogramEdgeEnd, spectrogramFrequencyBounds, spectrogramTimeRuns, visibleSpectrogramRuns } from '../src/components/signals/spectrogram-plot';
+import { interpolateSpectrogramPower, legacySpectrogramHsl, newestSpectrogramEdgeEnd, spectrogramFrequencyBounds, spectrogramPresentationEdgeEnd, spectrogramTimeRuns, visibleSpectrogramRuns } from '../src/components/signals/spectrogram-plot';
 import { SampleRing } from '../src/lib/signals/sample-ring';
 import { analyzePreparedSpectrogramColumn, analyzeSpectrogramBackfill, analyzeSpectrogramColumn, analyzeSpectrumRing, analyzeSpectrumSamples, prepareSpectrogramTimeline, prepareSpectrumSamples, prepareSpectrumSamplesAt, spectrogramHopUs } from '../src/lib/signals/spectrum-analysis';
 import { defaultSpectralSettings } from '../src/lib/signals/spectral-settings';
@@ -154,28 +154,30 @@ test('waveform aggregation averages fixed buckets and leaves empty buckets absen
   ]);
 });
 
-test('spectrum selects one recent contiguous run without crossing native or aggregate gaps', () => {
+test('spectrum reconstructs short native and aggregate gaps on one shared analysis grid', () => {
   const older = Array.from({ length: 20 }, (_, index) => ({ seq: index, t: index * 10_000, v: 1 }));
   const newer = Array.from({ length: 10 }, (_, index) => ({ seq: 30 + index, t: 300_000 + index * 10_000, v: 2 }));
   const native = prepareSpectrumSamples([...older, ...newer], 0)!;
-  expect(native.observations).toHaveLength(10);
-  expect(native.observations.every((sample) => sample.v === 2)).toBe(true);
-  expect(native.fftLength).toBe(8);
+  expect(native.observations).toHaveLength(40);
+  expect(native.quality).toMatchObject({ originalSampleCount: 30, interpolatedSampleCount: 10, status: 'reconstructed' });
+  expect(native.quality.reconstructedFraction).toBeCloseTo(0.25);
+  expect(native.quality.largestInterpolatedGapUs).toBe(100_000);
+  expect(native.fftLength).toBe(32);
 
   const fixed = prepareSpectrumSamples([
     ...Array.from({ length: 10 }, (_, index) => ({ seq: index, t: index * 10_000 + 1000, v: 1 })),
     ...Array.from({ length: 8 }, (_, index) => ({ seq: 20 + index, t: (index + 11) * 10_000 + 1000, v: 3 })),
   ], 10)!;
-  expect(fixed.observations).toHaveLength(8);
-  expect(fixed.observations.every((sample) => sample.v === 3)).toBe(true);
+  expect(fixed.observations).toHaveLength(19);
+  expect(fixed.quality).toMatchObject({ originalSampleCount: 18, interpolatedSampleCount: 1, largestInterpolatedGapUs: 10_000, status: 'reconstructed' });
 });
 
-test('spectrum falls back to the newest usable run and reports insufficient short data', () => {
+test('spectrum holds the last reliable run when the newest long-outage run is short', () => {
   const usable = Array.from({ length: 20 }, (_, index) => ({ seq: index, t: index * 10_000, v: index }));
-  const short = Array.from({ length: 7 }, (_, index) => ({ seq: 30 + index, t: 300_000 + index * 10_000, v: 100 + index }));
+  const short = Array.from({ length: 7 }, (_, index) => ({ seq: 31 + index, t: 310_000 + index * 10_000, v: 100 + index }));
   const selected = prepareSpectrumSamples([...usable, ...short], 0)!;
+  expect(selected).toMatchObject({ fftLength: 16, quality: { status: 'held' } });
   expect(selected.observations).toHaveLength(20);
-  expect(selected.fftLength).toBe(16);
   expect(prepareSpectrumSamples(short, 0)).toBeNull();
 });
 
@@ -265,7 +267,7 @@ test('spectrogram backfill prepares continuity once and preserves gaps and setti
   const settings = { ...defaultSpectralSettings, fftSize: 256 as const, welchSegments: 2 as const, bandAverage: false, mode: 'raw' as const };
   const result = analyzeSpectrogramBackfill([...first, ...second], 8_000_000, 21_000_000, 100_000, 0, settings);
   expect(result.attemptedColumns).toBe(131);
-  expect(result.columns.some((column) => column.timeUs > 10_000_000 && column.timeUs < 11_000_000)).toBe(false);
+  expect(result.columns.some((column) => column.timeUs > 10_000_000 && column.timeUs < 11_000_000 && column.quality.status === 'held')).toBe(true);
   expect(result.columns.at(-1)).toMatchObject({ fftLength: 256, welchSegmentCount: 2, requestedFftSize: 256 });
   expect(Object.hasOwn(result.columns.at(-1)!.points[0], 'rawPower')).toBe(false);
 });
@@ -324,10 +326,10 @@ test('native continuity tolerates bounded 250 Hz and 100 Hz phase jitter', () =>
   expect(prepareSpectrogramTimeline(jittered(10_000, 3000), 0)!.runs).toHaveLength(1);
 });
 
-test('native continuity keeps sequence gaps hard and detects clock jumps and sustained drift', () => {
+test('native continuity bridges only bounded sequence gaps and detects clock jumps and sustained drift', () => {
   const missingSequence = [
     ...Array.from({ length: 10 }, (_, index) => ({ seq: index, t: index * 10_000, v: index })),
-    ...Array.from({ length: 10 }, (_, index) => ({ seq: index + 11, t: (index + 10) * 10_000, v: index })),
+    ...Array.from({ length: 10 }, (_, index) => ({ seq: index + 21, t: (index + 21) * 10_000, v: index })),
   ];
   expect(prepareSpectrogramTimeline(missingSequence, 0)!.runs.map((run) => run.observations.length)).toEqual([10, 10]);
 
@@ -346,12 +348,49 @@ test('native continuity keeps sequence gaps hard and detects clock jumps and sus
   expect(prepareSpectrogramTimeline(sustainedDrift, 0)!.runs.length).toBeGreaterThan(2);
 });
 
-test('fixed aggregation continuity remains based only on occupied time buckets', () => {
+test('fixed aggregation reconstructs bounded empty buckets and preserves longer gaps', () => {
   const aggregated = prepareSpectrogramTimeline([
     { seq: 0, t: 10_000, v: 1 }, { seq: 2, t: 110_000, v: 2 },
-    { seq: 3, t: 310_000, v: 3 },
+    { seq: 3, t: 310_000, v: 3 }, { seq: 4, t: 610_000, v: 4 },
   ], 100)!;
-  expect(aggregated.runs.map((run) => run.observations.map((observation) => observation.key))).toEqual([[0, 1], [3]]);
+  expect(aggregated.runs.map((run) => run.observations.map((observation) => observation.key))).toEqual([[0, 1, 2, 3], [6]]);
+  expect(aggregated.runs[0].observations[2]).toMatchObject({ interpolated: true, v: 2.5 });
+});
+
+test('shared reconstruction preserves FFT 2048 through short losses at 100, 250, and 600 Hz', () => {
+  for (const [rate, removed] of [[100, 8], [250, 20], [600, 48]] as const) {
+    const intervalUs = 1_000_000 / rate;
+    const source = Array.from({ length: 5000 }, (_, index) => ({ seq: index, t: index * intervalUs, v: index }));
+    const samples = source.filter((_, index) => index < 2000 || index >= 2000 + removed);
+    const original = samples.map((sample) => ({ ...sample }));
+    const spectrum = prepareSpectrumSamples(samples, 0)!;
+    const timeline = prepareSpectrogramTimeline(samples, 0)!;
+    expect(timeline.runs).toHaveLength(1);
+    expect(timeline.runs[0].observations).toEqual(spectrum.observations);
+    expect(spectrum.fftLength).toBe(2048);
+    expect(spectrum.quality).toMatchObject({
+      originalSampleCount: 5000 - removed,
+      interpolatedSampleCount: removed,
+      status: 'reconstructed',
+    });
+    expect(spectrum.quality.largestInterpolatedGapUs).toBeCloseTo(removed * intervalUs, 0);
+    expect(spectrum.observations[2000].v).toBeCloseTo(2000);
+    expect(samples).toEqual(original);
+  }
+});
+
+test('spectrogram holds the last reliable result across a long outage until its FFT recovers', () => {
+  const first = Array.from({ length: 2500 }, (_, index) => ({ seq: index, t: index * 10_000, v: Math.sin(index / 10) }));
+  const second = Array.from({ length: 2200 }, (_, index) => ({ seq: 4000 + index, t: 40_000_000 + index * 10_000, v: Math.cos(index / 10) }));
+  const result = analyzeSpectrogramBackfill([...first, ...second], 20_000_000, 61_500_000, 500_000, 0);
+  const beforeGap = result.columns.find((column) => column.timeUs === 24_500_000)!;
+  const duringGap = result.columns.find((column) => column.timeUs === 30_000_000)!;
+  const earlyRecovery = result.columns.find((column) => column.timeUs === 41_000_000)!;
+  const recovered = result.columns.at(-1)!;
+  expect(beforeGap.quality.status).not.toBe('held');
+  expect(duringGap).toMatchObject({ fftLength: 2048, quality: { status: 'held' } });
+  expect(earlyRecovery).toMatchObject({ fftLength: 2048, quality: { status: 'held' } });
+  expect(recovered).toMatchObject({ fftLength: 2048, quality: { status: 'fresh' } });
 });
 
 test('spectrogram rendering joins valid columns, preserves real gaps, and clips edge cells', () => {
@@ -389,6 +428,7 @@ test('spectrogram rendering uses the legacy palette and stabilizes only the sche
   expect(legacySpectrogramHsl(1).lightness).toBeCloseTo(0.714);
   expect(newestSpectrogramEdgeEnd(1_000_000, 500_000, 1_400_000)).toBe(1_400_000);
   expect(newestSpectrogramEdgeEnd(1_000_000, 500_000, 1_700_000)).toBe(1_500_000);
+  expect(spectrogramPresentationEdgeEnd(1_000_000, 500_000, 2_000_000, 1_000_000)).toBe(2_000_000);
 });
 
 test('shows stale data, reconnects, and accepts a device clock reset', async ({ page }) => {

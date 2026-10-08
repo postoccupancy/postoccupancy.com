@@ -6,10 +6,26 @@ import { defaultSpectralSettings, type SpectralFftSize, type SpectralSettings } 
 const MIN_FFT_LENGTH = 8;
 const AUTO_MAX_FFT_LENGTH = 2048;
 const NATIVE_CLOCK_DRIFT_WINDOW_US = 2_000_000;
+export const MAX_ANALYSIS_INTERPOLATION_GAP_US = 100_000;
 
-export interface SpectrumObservation { key: number; t: number; v: number }
+export type AnalysisSampleStatus = 'fresh' | 'reconstructed' | 'held';
+export interface AnalysisQuality {
+  originalSampleCount: number;
+  interpolatedSampleCount: number;
+  reconstructedFraction: number;
+  largestInterpolatedGapUs: number;
+  status: AnalysisSampleStatus;
+}
+export interface SpectrumObservation {
+  key: number;
+  t: number;
+  v: number;
+  interpolated?: boolean;
+  interpolationGapUs?: number;
+}
 export interface SpectrumPreparation {
   observations: SpectrumObservation[];
+  quality: AnalysisQuality;
   effectiveSampleRate: number;
   contiguousDurationSeconds: number;
   fftLength: number;
@@ -34,6 +50,24 @@ interface SpectrogramRun {
   prefixSum: Float64Array;
   prefixMin: Float64Array;
   prefixMax: Float64Array;
+}
+
+function analysisQuality(observations: ReadonlyArray<SpectrumObservation>, status?: AnalysisSampleStatus): AnalysisQuality {
+  let interpolatedSampleCount = 0;
+  let largestInterpolatedGapUs = 0;
+  for (const observation of observations) {
+    if (!observation.interpolated) continue;
+    interpolatedSampleCount++;
+    largestInterpolatedGapUs = Math.max(largestInterpolatedGapUs, observation.interpolationGapUs ?? 0);
+  }
+  const originalSampleCount = observations.length - interpolatedSampleCount;
+  return {
+    originalSampleCount,
+    interpolatedSampleCount,
+    reconstructedFraction: observations.length ? interpolatedSampleCount / observations.length : 0,
+    largestInterpolatedGapUs,
+    status: status ?? (interpolatedSampleCount ? 'reconstructed' : 'fresh'),
+  };
 }
 
 export interface PreparedSpectrogramTimeline {
@@ -87,56 +121,99 @@ export function nativeClockDriftToleranceUs(expectedUs: number) {
   return Math.max(30_000, expectedUs * 4);
 }
 
-function spectrumRuns(samples: ReadonlyArray<Sample>, aggregationMs: number) {
-  if (!samples.length) return null;
-  let observations: SpectrumObservation[];
-  let expectedUs: number;
-  let continuous: (previous: SpectrumObservation, next: SpectrumObservation) => boolean;
-
-  if (aggregationMs > 0) {
-    expectedUs = aggregationMs * 1000;
-    observations = aggregateWaveformSamples(samples, expectedUs).map((sample) => ({ key: sample.bucket, t: sample.t, v: sample.v }));
-    continuous = (previous, next) => next.key - previous.key === 1;
-  } else {
-    expectedUs = nativeInterval(samples);
-    if (!(expectedUs > 0)) return null;
-    observations = samples.map((sample) => ({ key: sample.seq, t: sample.t, v: sample.v }));
-    const toleranceUs = nativeClockDriftToleranceUs(expectedUs);
-    let runStart: SpectrumObservation | null = null;
-    let runLength = 0;
-    continuous = (previous, next) => {
-      if (!runStart) {
-        runStart = previous;
-        runLength = 1;
-      }
-      const sequenceContinuous = ((next.key - previous.key) >>> 0) === 1;
-      const expectedTime = runStart.t + runLength * expectedUs;
-      const timeContinuous = Math.abs(next.t - expectedTime) <= toleranceUs;
-      if (sequenceContinuous && timeContinuous) {
-        runLength++;
-        if (runLength * expectedUs >= NATIVE_CLOCK_DRIFT_WINDOW_US) {
-          runStart = next;
-          runLength = 1;
-        }
-        return true;
-      }
-      runStart = next;
-      runLength = 1;
-      return false;
-    };
+function appendInterpolated(
+  run: SpectrumObservation[],
+  previous: SpectrumObservation,
+  next: SpectrumObservation,
+  missingCount: number,
+  expectedUs: number,
+) {
+  const gapUs = missingCount * expectedUs;
+  for (let offset = 1; offset <= missingCount; offset++) {
+    const fraction = offset / (missingCount + 1);
+    run.push({
+      key: previous.key + offset,
+      t: previous.t + offset * expectedUs,
+      v: previous.v + (next.v - previous.v) * fraction,
+      interpolated: true,
+      interpolationGapUs: gapUs,
+    });
   }
+}
 
+function reconstructedAggregateRuns(samples: ReadonlyArray<Sample>, expectedUs: number) {
+  const source = aggregateWaveformSamples(samples, expectedUs).map((sample) => ({ key: sample.bucket, t: sample.t, v: sample.v }));
   const runs: SpectrumObservation[][] = [];
   let run: SpectrumObservation[] = [];
-  for (const observation of observations) {
-    if (run.length && !continuous(run[run.length - 1], observation)) {
-      runs.push(run);
-      run = [];
+  for (const observation of source) {
+    const previous = run.at(-1);
+    if (previous) {
+      const missingCount = observation.key - previous.key - 1;
+      if (missingCount < 0 || missingCount * expectedUs > MAX_ANALYSIS_INTERPOLATION_GAP_US) {
+        runs.push(run);
+        run = [];
+      } else if (missingCount) {
+        appendInterpolated(run, previous, observation, missingCount, expectedUs);
+      }
     }
     run.push(observation);
   }
   if (run.length) runs.push(run);
+  return runs;
+}
 
+function reconstructedNativeRuns(samples: ReadonlyArray<Sample>, expectedUs: number) {
+  const runs: SpectrumObservation[][] = [];
+  const toleranceUs = nativeClockDriftToleranceUs(expectedUs);
+  let run: SpectrumObservation[] = [];
+  let clockAnchor: Sample | null = null;
+  let previousSource: Sample | null = null;
+
+  for (const sample of samples) {
+    if (!run.length || !previousSource || !clockAnchor) {
+      if (run.length) runs.push(run);
+      run = [{ key: sample.seq, t: sample.t, v: sample.v }];
+      clockAnchor = sample;
+      previousSource = sample;
+      continue;
+    }
+    const previous = run[run.length - 1];
+    const sequenceDelta = (sample.seq - previousSource.seq) >>> 0;
+    const anchorDelta = (sample.seq - clockAnchor.seq) >>> 0;
+    const expectedTime = clockAnchor.t + anchorDelta * expectedUs;
+    const timingValid = sample.t > previousSource.t && Math.abs(sample.t - expectedTime) <= toleranceUs;
+    const missingCount = sequenceDelta - 1;
+    const shortGap = missingCount >= 0 && missingCount * expectedUs <= MAX_ANALYSIS_INTERPOLATION_GAP_US;
+    if (!sequenceDelta || !timingValid || !shortGap) {
+      runs.push(run);
+      run = [{ key: sample.seq, t: sample.t, v: sample.v }];
+      clockAnchor = sample;
+      previousSource = sample;
+      continue;
+    }
+    const observation = { key: sample.seq, t: previous.t + sequenceDelta * expectedUs, v: sample.v };
+    if (missingCount) appendInterpolated(run, previous, observation, missingCount, expectedUs);
+    run.push(observation);
+    if (sample.t - clockAnchor.t >= NATIVE_CLOCK_DRIFT_WINDOW_US) clockAnchor = sample;
+    previousSource = sample;
+  }
+  if (run.length) runs.push(run);
+  return runs;
+}
+
+function spectrumRuns(samples: ReadonlyArray<Sample>, aggregationMs: number) {
+  if (!samples.length) return null;
+  let expectedUs: number;
+  let runs: SpectrumObservation[][];
+
+  if (aggregationMs > 0) {
+    expectedUs = aggregationMs * 1000;
+    runs = reconstructedAggregateRuns(samples, expectedUs);
+  } else {
+    expectedUs = nativeInterval(samples);
+    if (!(expectedUs > 0)) return null;
+    runs = reconstructedNativeRuns(samples, expectedUs);
+  }
   return { runs, expectedUs };
 }
 
@@ -167,7 +244,13 @@ export function prepareSpectrogramTimeline(samples: ReadonlyArray<Sample>, aggre
   };
 }
 
-function prepareRun(selected: SpectrumObservation[] | undefined, aggregationMs: number, requestedFftSize: SpectralFftSize, expectedUs?: number) {
+function prepareRun(
+  selected: SpectrumObservation[] | undefined,
+  aggregationMs: number,
+  requestedFftSize: SpectralFftSize,
+  expectedUs?: number,
+  status?: AnalysisSampleStatus,
+) {
   if (!selected) return null;
   const fftLength = largestPowerOfTwo(selected.length, requestedFftSize === 'auto' ? AUTO_MAX_FFT_LENGTH : requestedFftSize);
   if (fftLength < MIN_FFT_LENGTH) return null;
@@ -178,6 +261,7 @@ function prepareRun(selected: SpectrumObservation[] | undefined, aggregationMs: 
       : (selected.length - 1) * 1e6 / (selected[selected.length - 1].t - selected[0].t);
   return {
     observations: selected,
+    quality: analysisQuality(selected, status),
     effectiveSampleRate,
     contiguousDurationSeconds: (selected[selected.length - 1].t - selected[0].t) / 1e6,
     fftLength,
@@ -189,7 +273,16 @@ function prepareRun(selected: SpectrumObservation[] | undefined, aggregationMs: 
 export function prepareSpectrumSamples(samples: ReadonlyArray<Sample>, aggregationMs: number, requestedFftSize: SpectralFftSize = 'auto'): SpectrumPreparation | null {
   const result = spectrumRuns(samples, aggregationMs);
   if (!result) return null;
-  return prepareRun([...result.runs].reverse().find((candidate) => candidate.length >= MIN_FFT_LENGTH), aggregationMs, requestedFftSize, result.expectedUs);
+  const newest = prepareRun(result.runs.at(-1), aggregationMs, requestedFftSize, result.expectedUs);
+  let previous: SpectrumPreparation | null = null;
+  for (let index = result.runs.length - 2; index >= 0; index--) {
+    previous = prepareRun(result.runs[index], aggregationMs, requestedFftSize, result.expectedUs);
+    if (previous) break;
+  }
+  if (previous && (!newest || previous.fftLength > newest.fftLength)) {
+    return { ...previous, quality: { ...previous.quality, status: 'held' } };
+  }
+  return newest;
 }
 
 export function prepareSpectrumSamplesAt(samples: ReadonlyArray<Sample>, aggregationMs: number, timeUs: number, requestedFftSize: SpectralFftSize = 'auto'): SpectrumPreparation | null {
@@ -295,6 +388,7 @@ export function analyzePreparedSpectrogramColumn(timeline: PreparedSpectrogramTi
     : 1e6 / timeline.expectedUs;
   const prepared: SpectrumPreparation = {
     observations,
+    quality: analysisQuality(observations),
     effectiveSampleRate,
     contiguousDurationSeconds: (latest.t - run.observations[0].t) / 1e6,
     fftLength,
@@ -318,6 +412,7 @@ export function analyzeSpectrogramBackfill(
   hopUs: number,
   aggregationMs: number,
   settings: SpectralSettings = defaultSpectralSettings,
+  previousColumn?: SpectrogramColumn,
 ): SpectrogramBackfillResult {
   const preparationStarted = performance.now();
   const timeline = prepareSpectrogramTimeline(samples, aggregationMs);
@@ -325,11 +420,21 @@ export function analyzeSpectrogramBackfill(
   const analysisStarted = performance.now();
   const columns: SpectrogramColumn[] = [];
   let attemptedColumns = 0;
+  let lastReliable = previousColumn;
   if (timeline) {
     for (let timeUs = firstHopUs; timeUs <= finalHopUs; timeUs += hopUs) {
       attemptedColumns++;
-      const column = analyzePreparedSpectrogramColumn(timeline, timeUs, settings);
-      if (column) columns.push(column);
+      const candidate = analyzePreparedSpectrogramColumn(timeline, timeUs, settings);
+      if (candidate && (!lastReliable || candidate.fftLength >= lastReliable.fftLength)) {
+        columns.push(candidate);
+        lastReliable = candidate;
+      } else if (lastReliable) {
+        columns.push({
+          ...lastReliable,
+          timeUs,
+          quality: { ...lastReliable.quality, status: 'held' },
+        });
+      }
     }
   }
   return { columns, preparationMs, analysisMs: performance.now() - analysisStarted, attemptedColumns };
