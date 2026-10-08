@@ -1,8 +1,8 @@
 import { expect, test, type WebSocketRoute } from '@playwright/test';
 import { aggregateWaveformSamples } from '../src/components/signals/scope-plot';
-import { interpolateSpectrogramPower, legacySpectrogramHsl, newestSpectrogramEdgeEnd, spectrogramFrequencyBounds, spectrogramPresentationEdgeEnd, spectrogramTimeRuns, visibleSpectrogramRuns } from '../src/components/signals/spectrogram-plot';
+import { interpolateSpectrogramPower, legacySpectrogramHsl, mergeSpectrogramColumns, newestSpectrogramEdgeEnd, spectrogramFrequencyBounds, spectrogramFrequencyLabels, spectrogramPresentationEdgeEnd, spectrogramQualityLabel, spectrogramRasterTiles, spectrogramTimeRuns, visibleSpectrogramRuns } from '../src/components/signals/spectrogram-plot';
 import { SampleRing } from '../src/lib/signals/sample-ring';
-import { analyzePreparedSpectrogramColumn, analyzeSpectrogramBackfill, analyzeSpectrogramColumn, analyzeSpectrumRing, analyzeSpectrumSamples, prepareSpectrogramTimeline, prepareSpectrumSamples, prepareSpectrumSamplesAt, spectrogramHopUs } from '../src/lib/signals/spectrum-analysis';
+import { analyzePreparedSpectrogramBackfill, analyzePreparedSpectrogramColumn, analyzeSpectrogramBackfill, analyzeSpectrogramColumn, analyzeSpectrumRing, analyzeSpectrumSamples, prepareSpectrogramTimeline, prepareSpectrumSamples, prepareSpectrumSamplesAt, spectrogramHopUs } from '../src/lib/signals/spectrum-analysis';
 import { defaultSpectralSettings } from '../src/lib/signals/spectral-settings';
 import { frequencyPosition } from '../src/lib/visualizer/frequency-position';
 
@@ -92,6 +92,8 @@ test('discovers channels, converts power, and shares one socket across routes', 
   await expect(temperature.getByRole('img')).toHaveAttribute('data-spectrum-frequency-scale', 'linear');
   await page.getByRole('button', { name: 'Spectrogram', exact: true }).click();
   await expect(page.getByRole('img', { name: /Spectrogram/ })).toHaveCount(10);
+  await expect(page.locator('[data-spectrogram-quality-label]')).toHaveCount(10);
+  await expect(temperature.locator('[data-spectrogram-quality-label]')).toContainText(/(fresh|reconstructed|held) · \d+\.\d% interpolated · \d+\.\d ms max gap/);
   await expect(temperature.getByRole('img')).toHaveAttribute('data-spectrogram-requested-fft', '512');
   await expect(temperature.getByRole('img')).toHaveAttribute('data-spectrogram-welch', '1');
   await expect(temperature.getByRole('img')).toHaveAttribute('data-spectrogram-bands', 'false');
@@ -261,6 +263,20 @@ test('prepared spectrogram history matches single-column analysis and anchors We
   expect(prepared.welchSegmentCount).toBe(4);
 });
 
+test('equivalent Spectrum and Spectrogram endpoints produce identical spectral results', () => {
+  const samples = Array.from({ length: 6001 }, (_, index) => ({
+    seq: index,
+    t: index * 10_000,
+    v: Math.sin(2 * Math.PI * 7 * index / 100) + Math.sin(2 * Math.PI * 13 * index / 100) * 0.3,
+  }));
+  const settings = { ...defaultSpectralSettings, fftSize: 512 as const, welchSegments: 4 as const };
+  const spectrum = analyzeSpectrumSamples(samples, 0, 60, settings)!;
+  const spectrogram = analyzeSpectrogramColumn(samples, 60_000_000, 0, settings)!;
+  expect(spectrogram.points).toEqual(spectrum.points);
+  expect(spectrogram.peakFrequency).toBe(spectrum.peakFrequency);
+  expect(spectrogram.referencePsd).toBe(spectrum.referencePsd);
+});
+
 test('spectrogram backfill prepares continuity once and preserves gaps and settings', () => {
   const first = Array.from({ length: 1001 }, (_, index) => ({ seq: index, t: index * 10_000, v: Math.sin(index / 10) }));
   const second = Array.from({ length: 1001 }, (_, index) => ({ seq: 1100 + index, t: 11_000_000 + index * 10_000, v: Math.sin(index / 10) }));
@@ -393,6 +409,20 @@ test('spectrogram holds the last reliable result across a long outage until its 
   expect(recovered).toMatchObject({ fftLength: 2048, quality: { status: 'fresh' } });
 });
 
+test('prepared timeline supports recent-first progressive backfill without changing columns', () => {
+  const samples = Array.from({ length: 6001 }, (_, index) => ({ seq: index, t: index * 10_000, v: Math.sin(index / 10) }));
+  const timeline = prepareSpectrogramTimeline(samples, 0)!;
+  const whole = analyzePreparedSpectrogramBackfill(timeline, 500_000, 60_000_000, 500_000).columns;
+  const recent = analyzePreparedSpectrogramBackfill(timeline, 50_000_000, 60_000_000, 500_000).columns;
+  let progressive = recent;
+  for (let start = 500_000; start < 50_000_000; start += 5_000_000) {
+    const older = analyzePreparedSpectrogramBackfill(timeline, start, Math.min(49_500_000, start + 4_500_000), 500_000).columns;
+    progressive = mergeSpectrogramColumns(progressive, older);
+  }
+  expect(progressive.map((column) => column.timeUs)).toEqual(whole.map((column) => column.timeUs));
+  expect(progressive.at(-1)!.points).toEqual(whole.at(-1)!.points);
+});
+
 test('spectrogram rendering joins valid columns, preserves real gaps, and clips edge cells', () => {
   const column = (timeUs: number) => ({ timeUs, points: [{ frequency: 1, power: 1, binCount: 1 }, { frequency: 2, power: 2, binCount: 1 }] }) as never;
   const runs = spectrogramTimeRuns([column(500_000), column(1_000_000), column(2_000_000)], 500_000);
@@ -428,7 +458,28 @@ test('spectrogram rendering uses the legacy palette and stabilizes only the sche
   expect(legacySpectrogramHsl(1).lightness).toBeCloseTo(0.714);
   expect(newestSpectrogramEdgeEnd(1_000_000, 500_000, 1_400_000)).toBe(1_400_000);
   expect(newestSpectrogramEdgeEnd(1_000_000, 500_000, 1_700_000)).toBe(1_500_000);
+  expect(spectrogramPresentationEdgeEnd(1_000_000, 500_000, 1_700_000, 2_000_000)).toBe(1_700_000);
   expect(spectrogramPresentationEdgeEnd(1_000_000, 500_000, 2_000_000, 1_000_000)).toBe(2_000_000);
+});
+
+test('spectrogram labels, quality text, and raster tiles preserve interpretation during progressive history', () => {
+  expect(spectrogramFrequencyLabels({ firstFrequency: 0.195, lastFrequency: 50 })).toEqual({ top: '50.00 Hz', bottom: '0.20 Hz' });
+  const column = (timeUs: number, status: 'fresh' | 'reconstructed' | 'held' = 'fresh') => ({
+    timeUs,
+    fftLength: 512,
+    quality: { originalSampleCount: 90, interpolatedSampleCount: 10, reconstructedFraction: 0.1, largestInterpolatedGapUs: 40_000, status },
+    points: [{ frequency: 1, power: 1, binCount: 1 }, { frequency: 2, power: 2, binCount: 1 }],
+  }) as never;
+  expect(spectrogramQualityLabel(column(1_000_000, 'reconstructed'))).toBe('reconstructed · 10.0% interpolated · 40.0 ms max gap');
+  expect(spectrogramQualityLabel(column(1_000_000, 'held'))).toContain('held');
+  const recent = Array.from({ length: 20 }, (_, index) => column(50_000_000 + index * 500_000));
+  const recentTiles = spectrogramRasterTiles(recent, 500_000);
+  const withOlder = spectrogramRasterTiles([
+    ...Array.from({ length: 20 }, (_, index) => column(40_000_000 + index * 500_000)),
+    ...recent,
+  ], 500_000);
+  expect([withOlder.at(-1)!.startTimeUs, withOlder.at(-1)!.endTimeUs])
+    .toEqual([recentTiles.at(-1)!.startTimeUs, recentTiles.at(-1)!.endTimeUs]);
 });
 
 test('shows stale data, reconnects, and accepts a device clock reset', async ({ page }) => {

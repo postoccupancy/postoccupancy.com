@@ -417,27 +417,38 @@ export function analyzeSpectrogramBackfill(
   const preparationStarted = performance.now();
   const timeline = prepareSpectrogramTimeline(samples, aggregationMs);
   const preparationMs = performance.now() - preparationStarted;
+  if (!timeline) return { columns: [], preparationMs, analysisMs: 0, attemptedColumns: 0 };
+  const result = analyzePreparedSpectrogramBackfill(timeline, firstHopUs, finalHopUs, hopUs, settings, previousColumn);
+  return { ...result, preparationMs };
+}
+
+export function analyzePreparedSpectrogramBackfill(
+  timeline: PreparedSpectrogramTimeline,
+  firstHopUs: number,
+  finalHopUs: number,
+  hopUs: number,
+  settings: SpectralSettings = defaultSpectralSettings,
+  previousColumn?: SpectrogramColumn,
+): SpectrogramBackfillResult {
   const analysisStarted = performance.now();
   const columns: SpectrogramColumn[] = [];
   let attemptedColumns = 0;
   let lastReliable = previousColumn;
-  if (timeline) {
-    for (let timeUs = firstHopUs; timeUs <= finalHopUs; timeUs += hopUs) {
-      attemptedColumns++;
-      const candidate = analyzePreparedSpectrogramColumn(timeline, timeUs, settings);
-      if (candidate && (!lastReliable || candidate.fftLength >= lastReliable.fftLength)) {
-        columns.push(candidate);
-        lastReliable = candidate;
-      } else if (lastReliable) {
-        columns.push({
-          ...lastReliable,
-          timeUs,
-          quality: { ...lastReliable.quality, status: 'held' },
-        });
-      }
+  for (let timeUs = firstHopUs; timeUs <= finalHopUs; timeUs += hopUs) {
+    attemptedColumns++;
+    const candidate = analyzePreparedSpectrogramColumn(timeline, timeUs, settings);
+    if (candidate && (!lastReliable || candidate.fftLength >= lastReliable.fftLength)) {
+      columns.push(candidate);
+      lastReliable = candidate;
+    } else if (lastReliable) {
+      columns.push({
+        ...lastReliable,
+        timeUs,
+        quality: { ...lastReliable.quality, status: 'held' },
+      });
     }
   }
-  return { columns, preparationMs, analysisMs: performance.now() - analysisStarted, attemptedColumns };
+  return { columns, preparationMs: 0, analysisMs: performance.now() - analysisStarted, attemptedColumns };
 }
 
 export function spectrogramHopUs(aggregationMs: number) {
