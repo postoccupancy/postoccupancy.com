@@ -1,5 +1,6 @@
 import { expect, test, type WebSocketRoute } from '@playwright/test';
 import { aggregateWaveformSamples } from '../src/components/signals/scope-plot';
+import { interpolateSpectrogramPower, spectrogramTimeRuns, visibleSpectrogramRuns } from '../src/components/signals/spectrogram-plot';
 import { SampleRing } from '../src/lib/signals/sample-ring';
 import { analyzePreparedSpectrogramColumn, analyzeSpectrogramBackfill, analyzeSpectrogramColumn, analyzeSpectrumRing, analyzeSpectrumSamples, prepareSpectrogramTimeline, prepareSpectrumSamples, prepareSpectrumSamplesAt, spectrogramHopUs } from '../src/lib/signals/spectrum-analysis';
 import { defaultSpectralSettings } from '../src/lib/signals/spectral-settings';
@@ -295,6 +296,24 @@ test('spectrogram aggregation preserves empty buckets and hop policy follows agg
   expect(spectrogramHopUs(250)).toBe(500_000);
   expect(spectrogramHopUs(500)).toBe(500_000);
   expect(spectrogramHopUs(1000)).toBe(1_000_000);
+});
+
+test('spectrogram rendering joins valid columns, preserves real gaps, and clips edge cells', () => {
+  const column = (timeUs: number) => ({ timeUs, points: [{ frequency: 1, power: 1, binCount: 1 }, { frequency: 2, power: 2, binCount: 1 }] }) as never;
+  const runs = spectrogramTimeRuns([column(500_000), column(1_000_000), column(2_000_000)], 500_000);
+  expect(runs).toHaveLength(2);
+  expect(runs[0]).toMatchObject({ startTimeUs: 250_000, endTimeUs: 1_250_000 });
+  expect(runs[1]).toMatchObject({ startTimeUs: 1_750_000, endTimeUs: 2_250_000 });
+  expect(runs[1].startTimeUs - runs[0].endTimeUs).toBe(500_000);
+  expect(visibleSpectrogramRuns(runs, 1_100_000, 1_800_000)).toEqual(runs);
+  expect(visibleSpectrogramRuns(runs, 1_250_000, 1_750_000)).toEqual([]);
+});
+
+test('spectrogram rendering linearly interpolates power between frequency points', () => {
+  const points = [{ frequency: 10, power: 2, binCount: 1 }, { frequency: 20, power: 6, binCount: 1 }];
+  expect(interpolateSpectrogramPower(points, 10)).toBe(2);
+  expect(interpolateSpectrogramPower(points, 15)).toBe(4);
+  expect(interpolateSpectrogramPower(points, 20)).toBe(6);
 });
 
 test('shows stale data, reconnects, and accepts a device clock reset', async ({ page }) => {
