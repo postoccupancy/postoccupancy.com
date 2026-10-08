@@ -4,7 +4,7 @@ import { memo, useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import type { Channel, NodeClock } from '@/lib/signals/router-client';
 import { analyzeSpectrogramBackfill, spectrogramHopUs, type SpectrogramColumn } from '@/lib/signals/spectrum-analysis';
-import type { SpectralSettings } from '@/lib/signals/spectral-settings';
+import type { SpectralFftSize, SpectralSettings } from '@/lib/signals/spectral-settings';
 
 const HISTORY_US = 65_000_000;
 
@@ -39,8 +39,9 @@ export function visibleSpectrogramRuns(runs: SpectrogramTimeRun[], startTimeUs: 
 }
 
 export function interpolateSpectrogramPower(points: SpectrogramColumn['points'], frequency: number) {
-  if (frequency <= points[0].frequency) return points[0].power;
-  if (frequency >= points[points.length - 1].frequency) return points[points.length - 1].power;
+  if (frequency < points[0].frequency || frequency > points[points.length - 1].frequency) return null;
+  if (frequency === points[0].frequency) return points[0].power;
+  if (frequency === points[points.length - 1].frequency) return points[points.length - 1].power;
   let low = 0;
   let high = points.length - 1;
   while (high - low > 1) {
@@ -51,6 +52,23 @@ export function interpolateSpectrogramPower(points: SpectrogramColumn['points'],
   const span = points[high].frequency - points[low].frequency;
   const mix = span ? (frequency - points[low].frequency) / span : 0;
   return points[low].power * (1 - mix) + points[high].power * mix;
+}
+
+export function spectrogramFrequencyBounds(column: SpectrogramColumn, requestedFftSize: SpectralFftSize) {
+  const configuredFftLength = requestedFftSize === 'auto' ? 2048 : requestedFftSize;
+  return {
+    firstFrequency: column.effectiveSampleRate / configuredFftLength,
+    lastFrequency: column.effectiveSampleRate / 2,
+  };
+}
+
+export function legacySpectrogramHsl(level: number) {
+  const legacyValue = Math.max(0, Math.min(1, level)) * 255;
+  return { hue: 240 - legacyValue * 0.8, saturation: 0.9, lightness: legacyValue * 0.28 / 100 };
+}
+
+export function newestSpectrogramEdgeEnd(lastColumnTimeUs: number, hopUs: number, presentationEndUs: number) {
+  return Math.min(lastColumnTimeUs + hopUs, presentationEndUs);
 }
 
 function frequencyAtPosition(position: number, first: number, last: number, scale: SpectralSettings['frequencyScale']) {
@@ -92,8 +110,10 @@ function buildRunRaster(
       const position = 1 - y / Math.max(1, height - 1);
       const frequency = frequencyAtPosition(position, firstFrequency, lastFrequency, frequencyScale);
       const power = interpolateSpectrogramPower(column.points, frequency);
+      if (power === null) continue;
       const level = columnLevel(column, power, mode);
-      const [red, green, blue] = hslToRgb(240 - level * 240, 0.9, (8 + level * 52) / 100);
+      const color = legacySpectrogramHsl(level);
+      const [red, green, blue] = hslToRgb(color.hue, color.saturation, color.lightness);
       const offset = (y * raster.width + x) * 4;
       image.data[offset] = red;
       image.data[offset + 1] = green;
@@ -125,6 +145,7 @@ export const SpectrogramPlot = memo(function SpectrogramPlot({ channel, clock, d
   const spectralMode = spectralSettings.mode;
   const frequencyScale = spectralSettings.frequencyScale;
   const analysisKeyRef = useRef('');
+  const frequencyBoundsRef = useRef<{ firstFrequency: number; lastFrequency: number } | null>(null);
 
   useEffect(() => {
     void refreshKey;
@@ -140,6 +161,7 @@ export const SpectrogramPlot = memo(function SpectrogramPlot({ channel, clock, d
       analysisKeyRef.current = analysisKey;
       historyRef.current = [];
       lastHopRef.current = null;
+      frequencyBoundsRef.current = null;
     }
     const firstEligible = Math.max(samples[0].t, end - HISTORY_US);
     const hop = lastHopRef.current === null
@@ -150,6 +172,9 @@ export const SpectrogramPlot = memo(function SpectrogramPlot({ channel, clock, d
     if (hop <= finalHop) {
       const result = analyzeSpectrogramBackfill(samples, hop, finalHop, hopUs, aggregationMs, spectralSettings);
       historyRef.current.push(...result.columns);
+      if (!frequencyBoundsRef.current && result.columns.length) {
+        frequencyBoundsRef.current = spectrogramFrequencyBounds(result.columns[0], spectralSettings.fftSize);
+      }
       lastHopRef.current = finalHop;
       preparationMsRef.current = result.preparationMs;
       changed = true;
@@ -170,16 +195,15 @@ export const SpectrogramPlot = memo(function SpectrogramPlot({ channel, clock, d
     const hopUs = spectrogramHopUs(aggregationMs);
     const columns = historyRef.current.filter((column) => column.points.length > 1);
     const runs = spectrogramTimeRuns(columns, hopUs);
+    const frequencyBounds = frequencyBoundsRef.current;
     let rasterHeight = 0;
-    let rasterFirstFrequency = 0;
-    let rasterLastFrequency = 0;
     let rasters: Array<{ run: SpectrogramTimeRun; canvas: HTMLCanvasElement }> = [];
-    const ensureRasters = (height: number, firstFrequency: number, lastFrequency: number) => {
-      if (height === rasterHeight && firstFrequency === rasterFirstFrequency && lastFrequency === rasterLastFrequency) return;
+    const ensureRasters = (height: number) => {
+      if (height === rasterHeight || !frequencyBounds) return;
       rasterHeight = height;
-      rasterFirstFrequency = firstFrequency;
-      rasterLastFrequency = lastFrequency;
-      rasters = runs.map((run) => ({ run, canvas: buildRunRaster(run, height, firstFrequency, lastFrequency, spectralMode, frequencyScale) }));
+      rasters = runs.map((run) => ({ run, canvas: buildRunRaster(
+        run, height, frequencyBounds.firstFrequency, frequencyBounds.lastFrequency, spectralMode, frequencyScale,
+      ) }));
     };
     const draw = (now: number) => {
       const rect = canvas.getBoundingClientRect();
@@ -192,12 +216,8 @@ export const SpectrogramPlot = memo(function SpectrogramPlot({ channel, clock, d
       const windowUs = windowSeconds * 1e6;
       const start = end - windowUs;
       const visibleRuns = visibleSpectrogramRuns(runs, start, end);
-      if (visibleRuns.length) {
-        const visibleColumns = visibleRuns.flatMap((run) => run.columns.filter((column) =>
-          column.timeUs + hopUs / 2 > start && column.timeUs - hopUs / 2 < end));
-        const firstFrequency = Math.min(...visibleColumns.map((column) => column.points[0].frequency));
-        const lastFrequency = Math.max(...visibleColumns.map((column) => column.points[column.points.length - 1].frequency));
-        ensureRasters(height, firstFrequency, lastFrequency);
+      if (visibleRuns.length && frequencyBounds) {
+        ensureRasters(height);
         context.save();
         context.beginPath(); context.rect(0, 0, width, height); context.clip();
         context.imageSmoothingEnabled = true;
@@ -207,11 +227,19 @@ export const SpectrogramPlot = memo(function SpectrogramPlot({ channel, clock, d
           const left = (run.startTimeUs - start) / windowUs * width;
           const right = (run.endTimeUs - start) / windowUs * width;
           context.drawImage(raster, left, 0, right - left, height);
+          if (run === runs[runs.length - 1]) {
+            const lastColumn = run.columns[run.columns.length - 1];
+            const stableEnd = newestSpectrogramEdgeEnd(lastColumn.timeUs, hopUs, end);
+            if (stableEnd > run.endTimeUs) {
+              const stableRight = (stableEnd - start) / windowUs * width;
+              context.drawImage(raster, raster.width - 1, 0, 1, raster.height, right, 0, stableRight - right, height);
+            }
+          }
         }
         context.restore();
         context.fillStyle = '#d8e2e8'; context.font = `${10 * ratio}px monospace`; context.textBaseline = 'top';
-        context.textAlign = 'left'; context.fillText(`${firstFrequency.toFixed(2)} Hz`, 5 * ratio, 4 * ratio);
-        context.textAlign = 'right'; context.fillText(`${lastFrequency.toFixed(2)} Hz`, width - 5 * ratio, 4 * ratio);
+        context.textAlign = 'left'; context.fillText(`${frequencyBounds.firstFrequency.toFixed(2)} Hz`, 5 * ratio, 4 * ratio);
+        context.textAlign = 'right'; context.fillText(`${frequencyBounds.lastFrequency.toFixed(2)} Hz`, width - 5 * ratio, 4 * ratio);
         const latestRun = visibleRuns[visibleRuns.length - 1];
         const latest = latestRun.columns[latestRun.columns.length - 1];
         context.textBaseline = 'bottom';

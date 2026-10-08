@@ -1,6 +1,6 @@
 import { expect, test, type WebSocketRoute } from '@playwright/test';
 import { aggregateWaveformSamples } from '../src/components/signals/scope-plot';
-import { interpolateSpectrogramPower, spectrogramTimeRuns, visibleSpectrogramRuns } from '../src/components/signals/spectrogram-plot';
+import { interpolateSpectrogramPower, legacySpectrogramHsl, newestSpectrogramEdgeEnd, spectrogramFrequencyBounds, spectrogramTimeRuns, visibleSpectrogramRuns } from '../src/components/signals/spectrogram-plot';
 import { SampleRing } from '../src/lib/signals/sample-ring';
 import { analyzePreparedSpectrogramColumn, analyzeSpectrogramBackfill, analyzeSpectrogramColumn, analyzeSpectrumRing, analyzeSpectrumSamples, prepareSpectrogramTimeline, prepareSpectrumSamples, prepareSpectrumSamplesAt, spectrogramHopUs } from '../src/lib/signals/spectrum-analysis';
 import { defaultSpectralSettings } from '../src/lib/signals/spectral-settings';
@@ -314,6 +314,25 @@ test('spectrogram rendering linearly interpolates power between frequency points
   expect(interpolateSpectrogramPower(points, 10)).toBe(2);
   expect(interpolateSpectrogramPower(points, 15)).toBe(4);
   expect(interpolateSpectrogramPower(points, 20)).toBe(6);
+  expect(interpolateSpectrogramPower(points, 9)).toBeNull();
+  expect(interpolateSpectrogramPower(points, 21)).toBeNull();
+});
+
+test('spectrogram rendering keeps configured frequency bounds stable across effective FFT changes', () => {
+  const base = { effectiveSampleRate: 100, points: [{ frequency: 1, power: 1, binCount: 1 }, { frequency: 50, power: 1, binCount: 1 }] };
+  const fft64 = { ...base, fftLength: 64 } as never;
+  const fft512 = { ...base, fftLength: 512 } as never;
+  expect(spectrogramFrequencyBounds(fft64, 512)).toEqual({ firstFrequency: 100 / 512, lastFrequency: 50 });
+  expect(spectrogramFrequencyBounds(fft512, 512)).toEqual(spectrogramFrequencyBounds(fft64, 512));
+  expect(spectrogramFrequencyBounds(fft64, 'auto')).toEqual({ firstFrequency: 100 / 2048, lastFrequency: 50 });
+});
+
+test('spectrogram rendering uses the legacy palette and stabilizes only the scheduled newest edge', () => {
+  expect(legacySpectrogramHsl(0)).toEqual({ hue: 240, saturation: 0.9, lightness: 0 });
+  expect(legacySpectrogramHsl(1)).toMatchObject({ hue: 36, saturation: 0.9 });
+  expect(legacySpectrogramHsl(1).lightness).toBeCloseTo(0.714);
+  expect(newestSpectrogramEdgeEnd(1_000_000, 500_000, 1_400_000)).toBe(1_400_000);
+  expect(newestSpectrogramEdgeEnd(1_000_000, 500_000, 1_700_000)).toBe(1_500_000);
 });
 
 test('shows stale data, reconnects, and accepts a device clock reset', async ({ page }) => {
