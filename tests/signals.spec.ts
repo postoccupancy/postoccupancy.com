@@ -96,7 +96,7 @@ test('discovers channels, converts power, and shares one socket across routes', 
   await expect(temperature.getByRole('img')).toHaveAttribute('data-spectrogram-bands', 'false');
   await expect(temperature.getByRole('img')).toHaveAttribute('data-spectrogram-mode', 'raw');
   await expect(temperature.getByRole('img')).toHaveAttribute('data-spectrogram-frequency-scale', 'linear');
-  await expect(temperature.getByRole('img')).toHaveAttribute('data-spectrogram-hop-ms', '100');
+  await expect(temperature.getByRole('img')).toHaveAttribute('data-spectrogram-hop-ms', '500');
   await expect(Number(await temperature.getByRole('img').getAttribute('data-spectrogram-columns'))).toBeGreaterThan(0);
   const firstColumn = await temperature.getByRole('img').getAttribute('data-spectrogram-first-time');
   await timeWindow.focus(); await timeWindow.press('ArrowLeft');
@@ -290,9 +290,10 @@ test('spectrogram aggregation preserves empty buckets and hop policy follows agg
     ...Array.from({ length: 8 }, (_, index) => ({ seq: 10 + index, t: 300_000 + index * 100_000 + 10_000, v: index })),
   ];
   expect(prepareSpectrumSamplesAt(samples, 100, 250_000)).toBeNull();
-  expect(spectrogramHopUs(0)).toBe(100_000);
-  expect(spectrogramHopUs(100)).toBe(100_000);
-  expect(spectrogramHopUs(250)).toBe(250_000);
+  expect(spectrogramHopUs(0)).toBe(500_000);
+  expect(spectrogramHopUs(100)).toBe(500_000);
+  expect(spectrogramHopUs(250)).toBe(500_000);
+  expect(spectrogramHopUs(500)).toBe(500_000);
   expect(spectrogramHopUs(1000)).toBe(1_000_000);
 });
 

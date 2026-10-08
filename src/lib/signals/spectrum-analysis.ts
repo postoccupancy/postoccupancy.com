@@ -292,7 +292,7 @@ export function analyzeSpectrogramBackfill(
 }
 
 export function spectrogramHopUs(aggregationMs: number) {
-  return Math.max(100, aggregationMs) * 1000;
+  return Math.max(500, aggregationMs) * 1000;
 }
 
 export function analyzeSpectrumRing(
