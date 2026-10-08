@@ -3,7 +3,7 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import type { Channel, NodeClock } from '@/lib/signals/router-client';
-import { analyzeSpectrogramColumn, spectrogramHopUs, type SpectrogramColumn } from '@/lib/signals/spectrum-analysis';
+import { analyzeSpectrogramBackfill, spectrogramHopUs, type SpectrogramColumn } from '@/lib/signals/spectrum-analysis';
 import type { SpectralSettings } from '@/lib/signals/spectral-settings';
 import { frequencyPosition } from '@/lib/visualizer/frequency-position';
 
@@ -29,6 +29,7 @@ export const SpectrogramPlot = memo(function SpectrogramPlot({ channel, clock, d
   const historyRef = useRef<SpectrogramColumn[]>([]);
   const lastHopRef = useRef<number | null>(null);
   const backfillMsRef = useRef(0);
+  const preparationMsRef = useRef(0);
   const [revision, setRevision] = useState(0);
   const analysisKey = `${channel.id}/${clock?.generation ?? -1}/${aggregationMs}/${spectralSettings.fftSize}/${spectralSettings.welchSegments}/${spectralSettings.bandAverage}/${spectralSettings.mode}`;
   const analysisKeyRef = useRef('');
@@ -49,15 +50,16 @@ export const SpectrogramPlot = memo(function SpectrogramPlot({ channel, clock, d
       lastHopRef.current = null;
     }
     const firstEligible = Math.max(samples[0].t, end - HISTORY_US);
-    let hop = lastHopRef.current === null
+    const hop = lastHopRef.current === null
       ? Math.ceil(firstEligible / hopUs) * hopUs
       : lastHopRef.current + hopUs;
     const finalHop = Math.floor(end / hopUs) * hopUs;
     let changed = rebuild;
-    for (; hop <= finalHop; hop += hopUs) {
-      const column = analyzeSpectrogramColumn(samples, hop, aggregationMs, spectralSettings);
-      if (column) historyRef.current.push(column);
-      lastHopRef.current = hop;
+    if (hop <= finalHop) {
+      const result = analyzeSpectrogramBackfill(samples, hop, finalHop, hopUs, aggregationMs, spectralSettings);
+      historyRef.current.push(...result.columns);
+      lastHopRef.current = finalHop;
+      preparationMsRef.current = result.preparationMs;
       changed = true;
     }
     const retainAfter = end - HISTORY_US;
@@ -133,5 +135,6 @@ export const SpectrogramPlot = memo(function SpectrogramPlot({ channel, clock, d
     data-spectrogram-mode={spectralSettings.mode} data-spectrogram-frequency-scale={spectralSettings.frequencyScale}
     data-spectrogram-first-time={historyRef.current[0]?.timeUs} data-spectrogram-last-time={latest?.timeUs}
     data-spectrogram-backfill-ms={backfillMsRef.current.toFixed(1)}
+    data-spectrogram-preparation-ms={preparationMsRef.current.toFixed(1)}
     sx={{ display: 'block', width: '100%', height: 170, bgcolor: '#071017' }} />;
 });

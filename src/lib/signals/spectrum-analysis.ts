@@ -28,6 +28,26 @@ export interface SpectrogramColumn extends SignalsSpectrum {
   timeUs: number;
 }
 
+interface SpectrogramRun {
+  observations: SpectrumObservation[];
+  prefixSum: Float64Array;
+  prefixMin: Float64Array;
+  prefixMax: Float64Array;
+}
+
+export interface PreparedSpectrogramTimeline {
+  runs: SpectrogramRun[];
+  expectedUs: number;
+  aggregationMs: number;
+}
+
+export interface SpectrogramBackfillResult {
+  columns: SpectrogramColumn[];
+  preparationMs: number;
+  analysisMs: number;
+  attemptedColumns: number;
+}
+
 function nativeInterval(samples: ReadonlyArray<Sample>) {
   const intervals: number[] = [];
   for (let index = 1; index < samples.length; index++) {
@@ -78,6 +98,33 @@ function spectrumRuns(samples: ReadonlyArray<Sample>, aggregationMs: number) {
   return { runs, expectedUs };
 }
 
+export function prepareSpectrogramTimeline(samples: ReadonlyArray<Sample>, aggregationMs: number): PreparedSpectrogramTimeline | null {
+  const result = spectrumRuns(samples, aggregationMs);
+  if (!result) return null;
+  return {
+    expectedUs: result.expectedUs,
+    aggregationMs,
+    runs: result.runs.map((observations) => {
+      const prefixSum = new Float64Array(observations.length);
+      const prefixMin = new Float64Array(observations.length);
+      const prefixMax = new Float64Array(observations.length);
+      let sum = 0;
+      let minimum = Infinity;
+      let maximum = -Infinity;
+      for (let index = 0; index < observations.length; index++) {
+        const value = observations[index].v;
+        sum += value;
+        minimum = Math.min(minimum, value);
+        maximum = Math.max(maximum, value);
+        prefixSum[index] = sum;
+        prefixMin[index] = minimum;
+        prefixMax[index] = maximum;
+      }
+      return { observations, prefixSum, prefixMin, prefixMax };
+    }),
+  };
+}
+
 function prepareRun(selected: SpectrumObservation[] | undefined, aggregationMs: number, requestedFftSize: SpectralFftSize) {
   if (!selected) return null;
   const fftLength = largestPowerOfTwo(selected.length, requestedFftSize === 'auto' ? AUTO_MAX_FFT_LENGTH : requestedFftSize);
@@ -113,7 +160,7 @@ export function prepareSpectrumSamplesAt(samples: ReadonlyArray<Sample>, aggrega
   return prepareRun(selected, aggregationMs, requestedFftSize);
 }
 
-function analyzePrepared(prepared: SpectrumPreparation, requestedWindowSeconds: number, settings: SpectralSettings): SignalsSpectrum | null {
+function analyzePrepared(prepared: SpectrumPreparation, requestedWindowSeconds: number, settings: SpectralSettings, amplitudeReference?: number): SignalsSpectrum | null {
   const values = Float64Array.from(prepared.observations, (sample) => sample.v);
   const psd = welchPsd(values, prepared.effectiveSampleRate, prepared.fftLength, settings.welchSegments, 0.5);
   if (!psd) return null;
@@ -125,7 +172,7 @@ function analyzePrepared(prepared: SpectrumPreparation, requestedWindowSeconds: 
   const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
   let observedPeak = 0;
   for (const value of values) observedPeak = Math.max(observedPeak, Math.abs(value - mean));
-  const amplitudeReference = observedPeak ? observedPeak * 16 : 1;
+  const referenceAmplitude = amplitudeReference ?? (observedPeak ? observedPeak * 16 : 1);
   return {
     ...prepared,
     requestedWindowSeconds,
@@ -133,7 +180,7 @@ function analyzePrepared(prepared: SpectrumPreparation, requestedWindowSeconds: 
     resolution: psd.resolution,
     points,
     peakFrequency: peak?.frequency ?? 0,
-    referencePsd: psd.fullScaleSinePsd * amplitudeReference * amplitudeReference,
+    referencePsd: psd.fullScaleSinePsd * referenceAmplitude * referenceAmplitude,
   };
 }
 
@@ -159,10 +206,89 @@ export function analyzeSpectrumSamples(
 }
 
 export function analyzeSpectrogramColumn(samples: ReadonlyArray<Sample>, timeUs: number, aggregationMs: number, settings: SpectralSettings = defaultSpectralSettings): SpectrogramColumn | null {
-  const prepared = prepareSpectrumSamplesAt(samples, aggregationMs, timeUs, settings.fftSize);
-  if (!prepared) return null;
-  const spectrum = analyzePrepared(prepared, prepared.fftDurationSeconds, settings);
+  const timeline = prepareSpectrogramTimeline(samples, aggregationMs);
+  return timeline ? analyzePreparedSpectrogramColumn(timeline, timeUs, settings) : null;
+}
+
+function upperBoundTime(observations: SpectrumObservation[], timeUs: number) {
+  let low = 0;
+  let high = observations.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (observations[middle].t <= timeUs) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+export function analyzePreparedSpectrogramColumn(timeline: PreparedSpectrogramTimeline, timeUs: number, settings: SpectralSettings = defaultSpectralSettings): SpectrogramColumn | null {
+  let run: SpectrogramRun | undefined;
+  let observationCount = 0;
+  for (const candidate of timeline.runs) {
+    if (candidate.observations[0].t > timeUs) break;
+    const count = upperBoundTime(candidate.observations, timeUs);
+    if (count) {
+      run = candidate;
+      observationCount = count;
+    }
+  }
+  if (!run || observationCount < MIN_FFT_LENGTH) return null;
+  const latest = run.observations[observationCount - 1];
+  const toleranceUs = Math.max(1000, timeline.expectedUs * 1.5);
+  if (timeUs - latest.t > toleranceUs) return null;
+
+  const fftMaximum = settings.fftSize === 'auto' ? AUTO_MAX_FFT_LENGTH : settings.fftSize;
+  const fftLength = largestPowerOfTwo(observationCount, fftMaximum);
+  if (fftLength < MIN_FFT_LENGTH) return null;
+  const welchHop = Math.max(1, Math.round(fftLength * 0.5));
+  const availableSegments = 1 + Math.floor((observationCount - fftLength) / welchHop);
+  const usedSegments = Math.max(1, Math.min(settings.welchSegments, availableSegments));
+  const usedObservationCount = fftLength + (usedSegments - 1) * welchHop;
+  const analysisStart = observationCount - usedObservationCount;
+  const observations = run.observations.slice(analysisStart, observationCount);
+  const effectiveSampleRate = timeline.aggregationMs > 0
+    ? 1000 / timeline.aggregationMs
+    : (observationCount - 1) * 1e6 / (latest.t - run.observations[0].t);
+  const prepared: SpectrumPreparation = {
+    observations,
+    effectiveSampleRate,
+    contiguousDurationSeconds: (latest.t - run.observations[0].t) / 1e6,
+    fftLength,
+    requestedFftSize: settings.fftSize,
+    fftDurationSeconds: fftLength / effectiveSampleRate,
+  };
+  const mean = run.prefixSum[observationCount - 1] / observationCount;
+  const observedPeak = Math.max(
+    Math.abs(run.prefixMin[observationCount - 1] - mean),
+    Math.abs(run.prefixMax[observationCount - 1] - mean),
+  );
+  const amplitudeReference = observedPeak ? observedPeak * 16 : 1;
+  const spectrum = analyzePrepared(prepared, prepared.fftDurationSeconds, settings, amplitudeReference);
   return spectrum ? { ...spectrum, timeUs } : null;
+}
+
+export function analyzeSpectrogramBackfill(
+  samples: ReadonlyArray<Sample>,
+  firstHopUs: number,
+  finalHopUs: number,
+  hopUs: number,
+  aggregationMs: number,
+  settings: SpectralSettings = defaultSpectralSettings,
+): SpectrogramBackfillResult {
+  const preparationStarted = performance.now();
+  const timeline = prepareSpectrogramTimeline(samples, aggregationMs);
+  const preparationMs = performance.now() - preparationStarted;
+  const analysisStarted = performance.now();
+  const columns: SpectrogramColumn[] = [];
+  let attemptedColumns = 0;
+  if (timeline) {
+    for (let timeUs = firstHopUs; timeUs <= finalHopUs; timeUs += hopUs) {
+      attemptedColumns++;
+      const column = analyzePreparedSpectrogramColumn(timeline, timeUs, settings);
+      if (column) columns.push(column);
+    }
+  }
+  return { columns, preparationMs, analysisMs: performance.now() - analysisStarted, attemptedColumns };
 }
 
 export function spectrogramHopUs(aggregationMs: number) {

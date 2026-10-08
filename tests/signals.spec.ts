@@ -1,7 +1,7 @@
 import { expect, test, type WebSocketRoute } from '@playwright/test';
 import { aggregateWaveformSamples } from '../src/components/signals/scope-plot';
 import { SampleRing } from '../src/lib/signals/sample-ring';
-import { analyzeSpectrogramColumn, analyzeSpectrumRing, analyzeSpectrumSamples, prepareSpectrumSamples, prepareSpectrumSamplesAt, spectrogramHopUs } from '../src/lib/signals/spectrum-analysis';
+import { analyzePreparedSpectrogramColumn, analyzeSpectrogramBackfill, analyzeSpectrogramColumn, analyzeSpectrumRing, analyzeSpectrumSamples, prepareSpectrogramTimeline, prepareSpectrumSamples, prepareSpectrumSamplesAt, spectrogramHopUs } from '../src/lib/signals/spectrum-analysis';
 import { defaultSpectralSettings } from '../src/lib/signals/spectral-settings';
 import { frequencyPosition } from '../src/lib/visualizer/frequency-position';
 
@@ -239,6 +239,34 @@ test('spectrogram columns are timestamp anchored, reuse Welch DSP, and locate a 
   expect(column.welchSegmentCount).toBe(2);
   expect(column.fftDurationSeconds).toBeCloseTo(5.12);
   expect(Math.abs(column.peakFrequency - 5)).toBeLessThanOrEqual(column.resolution);
+});
+
+test('prepared spectrogram history matches single-column analysis and anchors Welch at each endpoint', () => {
+  const samples = Array.from({ length: 6001 }, (_, index) => ({
+    seq: index,
+    t: index * 10_000,
+    v: index < 5000
+      ? Math.sin(2 * Math.PI * 3 * index / 100)
+      : Math.sin(2 * Math.PI * 11 * index / 100),
+  }));
+  const settings = { ...defaultSpectralSettings, fftSize: 512 as const, welchSegments: 4 as const };
+  const timeline = prepareSpectrogramTimeline(samples, 0)!;
+  const prepared = analyzePreparedSpectrogramColumn(timeline, 60_000_000, settings)!;
+  const legacyEntryPoint = analyzeSpectrogramColumn(samples, 60_000_000, 0, settings)!;
+  expect(Math.abs(prepared.peakFrequency - 11)).toBeLessThanOrEqual(prepared.resolution);
+  expect(prepared.points).toEqual(legacyEntryPoint.points);
+  expect(prepared.welchSegmentCount).toBe(4);
+});
+
+test('spectrogram backfill prepares continuity once and preserves gaps and settings', () => {
+  const first = Array.from({ length: 1001 }, (_, index) => ({ seq: index, t: index * 10_000, v: Math.sin(index / 10) }));
+  const second = Array.from({ length: 1001 }, (_, index) => ({ seq: 1100 + index, t: 11_000_000 + index * 10_000, v: Math.sin(index / 10) }));
+  const settings = { ...defaultSpectralSettings, fftSize: 256 as const, welchSegments: 2 as const, bandAverage: false, mode: 'raw' as const };
+  const result = analyzeSpectrogramBackfill([...first, ...second], 8_000_000, 21_000_000, 100_000, 0, settings);
+  expect(result.attemptedColumns).toBe(131);
+  expect(result.columns.some((column) => column.timeUs > 10_000_000 && column.timeUs < 11_000_000)).toBe(false);
+  expect(result.columns.at(-1)).toMatchObject({ fftLength: 256, welchSegmentCount: 2, requestedFftSize: 256 });
+  expect(Object.hasOwn(result.columns.at(-1)!.points[0], 'rawPower')).toBe(false);
 });
 
 test('spectrogram never crosses gaps or substitutes an older run at a newer timestamp', () => {
