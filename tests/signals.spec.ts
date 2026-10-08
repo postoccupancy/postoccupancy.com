@@ -298,6 +298,62 @@ test('spectrogram aggregation preserves empty buckets and hop policy follows agg
   expect(spectrogramHopUs(1000)).toBe(1_000_000);
 });
 
+test('native continuity sustains FFT 2048 across realistic 600 Hz timestamp jitter', () => {
+  const jitter = [-700, 0, 700];
+  let timeUs = 0;
+  const samples = Array.from({ length: 5000 }, (_, index) => {
+    if (index) timeUs += 1667 + jitter[index % jitter.length];
+    return { seq: index, t: timeUs, v: Math.sin(index / 20) };
+  });
+  const timeline = prepareSpectrogramTimeline(samples, 0)!;
+  expect(timeline.runs).toHaveLength(1);
+  expect(analyzeSpectrogramColumn(samples, samples.at(-1)!.t, 0)!.fftLength).toBe(2048);
+  expect(analyzeSpectrogramColumn(samples, samples.at(-1)!.t, 0)!.effectiveSampleRate).toBeCloseTo(600, 0);
+});
+
+test('native continuity tolerates bounded 250 Hz and 100 Hz phase jitter', () => {
+  const jittered = (intervalUs: number, jitterUs: number) => {
+    let timeUs = 0;
+    const jitter = [-jitterUs, 0, jitterUs];
+    return Array.from({ length: 3000 }, (_, index) => {
+      if (index) timeUs += intervalUs + jitter[index % jitter.length];
+      return { seq: index, t: timeUs, v: index };
+    });
+  };
+  expect(prepareSpectrogramTimeline(jittered(4000, 1500), 0)!.runs).toHaveLength(1);
+  expect(prepareSpectrogramTimeline(jittered(10_000, 3000), 0)!.runs).toHaveLength(1);
+});
+
+test('native continuity keeps sequence gaps hard and detects clock jumps and sustained drift', () => {
+  const missingSequence = [
+    ...Array.from({ length: 10 }, (_, index) => ({ seq: index, t: index * 10_000, v: index })),
+    ...Array.from({ length: 10 }, (_, index) => ({ seq: index + 11, t: (index + 10) * 10_000, v: index })),
+  ];
+  expect(prepareSpectrogramTimeline(missingSequence, 0)!.runs.map((run) => run.observations.length)).toEqual([10, 10]);
+
+  const clockJump = Array.from({ length: 200 }, (_, index) => ({
+    seq: index,
+    t: index < 100 ? index * 10_000 : index * 10_000 + 100_000,
+    v: index,
+  }));
+  expect(prepareSpectrogramTimeline(clockJump, 0)!.runs.map((run) => run.observations.length)).toEqual([100, 100]);
+
+  let timeUs = 0;
+  const sustainedDrift = Array.from({ length: 700 }, (_, index) => {
+    if (index) timeUs += index < 500 ? 10_000 : 12_000;
+    return { seq: index, t: timeUs, v: index };
+  });
+  expect(prepareSpectrogramTimeline(sustainedDrift, 0)!.runs.length).toBeGreaterThan(2);
+});
+
+test('fixed aggregation continuity remains based only on occupied time buckets', () => {
+  const aggregated = prepareSpectrogramTimeline([
+    { seq: 0, t: 10_000, v: 1 }, { seq: 2, t: 110_000, v: 2 },
+    { seq: 3, t: 310_000, v: 3 },
+  ], 100)!;
+  expect(aggregated.runs.map((run) => run.observations.map((observation) => observation.key))).toEqual([[0, 1], [3]]);
+});
+
 test('spectrogram rendering joins valid columns, preserves real gaps, and clips edge cells', () => {
   const column = (timeUs: number) => ({ timeUs, points: [{ frequency: 1, power: 1, binCount: 1 }, { frequency: 2, power: 2, binCount: 1 }] }) as never;
   const runs = spectrogramTimeRuns([column(500_000), column(1_000_000), column(2_000_000)], 500_000);

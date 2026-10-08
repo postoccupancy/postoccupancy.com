@@ -5,6 +5,7 @@ import { defaultSpectralSettings, type SpectralFftSize, type SpectralSettings } 
 
 const MIN_FFT_LENGTH = 8;
 const AUTO_MAX_FFT_LENGTH = 2048;
+const NATIVE_CLOCK_DRIFT_WINDOW_US = 2_000_000;
 
 export interface SpectrumObservation { key: number; t: number; v: number }
 export interface SpectrumPreparation {
@@ -50,19 +51,40 @@ export interface SpectrogramBackfillResult {
 
 function nativeInterval(samples: ReadonlyArray<Sample>) {
   const intervals: number[] = [];
+  const blockMeans: number[] = [];
+  let blockSum = 0;
+  let blockCount = 0;
   for (let index = 1; index < samples.length; index++) {
-    if (((samples[index].seq - samples[index - 1].seq) >>> 0) === 1) intervals.push(samples[index].t - samples[index - 1].t);
+    if (((samples[index].seq - samples[index - 1].seq) >>> 0) !== 1) {
+      blockSum = 0;
+      blockCount = 0;
+      continue;
+    }
+    const interval = samples[index].t - samples[index - 1].t;
+    intervals.push(interval);
+    blockSum += interval;
+    blockCount++;
+    if (blockCount === 64) {
+      blockMeans.push(blockSum / blockCount);
+      blockSum = 0;
+      blockCount = 0;
+    }
   }
-  intervals.sort((a, b) => a - b);
-  if (!intervals.length) return 0;
-  const middle = Math.floor(intervals.length / 2);
-  return intervals.length % 2 ? intervals[middle] : (intervals[middle - 1] + intervals[middle]) / 2;
+  const estimates = blockMeans.length ? blockMeans : intervals;
+  estimates.sort((a, b) => a - b);
+  if (!estimates.length) return 0;
+  const middle = Math.floor(estimates.length / 2);
+  return estimates.length % 2 ? estimates[middle] : (estimates[middle - 1] + estimates[middle]) / 2;
 }
 
 function largestPowerOfTwo(value: number, maximum: number) {
   let result = 1;
   while (result * 2 <= value && result * 2 <= maximum) result *= 2;
   return result;
+}
+
+export function nativeClockDriftToleranceUs(expectedUs: number) {
+  return Math.max(30_000, expectedUs * 4);
 }
 
 function spectrumRuns(samples: ReadonlyArray<Sample>, aggregationMs: number) {
@@ -79,9 +101,29 @@ function spectrumRuns(samples: ReadonlyArray<Sample>, aggregationMs: number) {
     expectedUs = nativeInterval(samples);
     if (!(expectedUs > 0)) return null;
     observations = samples.map((sample) => ({ key: sample.seq, t: sample.t, v: sample.v }));
-    const toleranceUs = Math.max(1000, expectedUs * 0.5);
-    continuous = (previous, next) =>
-      ((next.key - previous.key) >>> 0) === 1 && Math.abs(next.t - previous.t - expectedUs) <= toleranceUs;
+    const toleranceUs = nativeClockDriftToleranceUs(expectedUs);
+    let runStart: SpectrumObservation | null = null;
+    let runLength = 0;
+    continuous = (previous, next) => {
+      if (!runStart) {
+        runStart = previous;
+        runLength = 1;
+      }
+      const sequenceContinuous = ((next.key - previous.key) >>> 0) === 1;
+      const expectedTime = runStart.t + runLength * expectedUs;
+      const timeContinuous = Math.abs(next.t - expectedTime) <= toleranceUs;
+      if (sequenceContinuous && timeContinuous) {
+        runLength++;
+        if (runLength * expectedUs >= NATIVE_CLOCK_DRIFT_WINDOW_US) {
+          runStart = next;
+          runLength = 1;
+        }
+        return true;
+      }
+      runStart = next;
+      runLength = 1;
+      return false;
+    };
   }
 
   const runs: SpectrumObservation[][] = [];
@@ -125,13 +167,15 @@ export function prepareSpectrogramTimeline(samples: ReadonlyArray<Sample>, aggre
   };
 }
 
-function prepareRun(selected: SpectrumObservation[] | undefined, aggregationMs: number, requestedFftSize: SpectralFftSize) {
+function prepareRun(selected: SpectrumObservation[] | undefined, aggregationMs: number, requestedFftSize: SpectralFftSize, expectedUs?: number) {
   if (!selected) return null;
   const fftLength = largestPowerOfTwo(selected.length, requestedFftSize === 'auto' ? AUTO_MAX_FFT_LENGTH : requestedFftSize);
   if (fftLength < MIN_FFT_LENGTH) return null;
   const effectiveSampleRate = aggregationMs > 0
     ? 1000 / aggregationMs
-    : (selected.length - 1) * 1e6 / (selected[selected.length - 1].t - selected[0].t);
+    : expectedUs && expectedUs > 0
+      ? 1e6 / expectedUs
+      : (selected.length - 1) * 1e6 / (selected[selected.length - 1].t - selected[0].t);
   return {
     observations: selected,
     effectiveSampleRate,
@@ -145,7 +189,7 @@ function prepareRun(selected: SpectrumObservation[] | undefined, aggregationMs: 
 export function prepareSpectrumSamples(samples: ReadonlyArray<Sample>, aggregationMs: number, requestedFftSize: SpectralFftSize = 'auto'): SpectrumPreparation | null {
   const result = spectrumRuns(samples, aggregationMs);
   if (!result) return null;
-  return prepareRun([...result.runs].reverse().find((candidate) => candidate.length >= MIN_FFT_LENGTH), aggregationMs, requestedFftSize);
+  return prepareRun([...result.runs].reverse().find((candidate) => candidate.length >= MIN_FFT_LENGTH), aggregationMs, requestedFftSize, result.expectedUs);
 }
 
 export function prepareSpectrumSamplesAt(samples: ReadonlyArray<Sample>, aggregationMs: number, timeUs: number, requestedFftSize: SpectralFftSize = 'auto'): SpectrumPreparation | null {
@@ -157,7 +201,7 @@ export function prepareSpectrumSamplesAt(samples: ReadonlyArray<Sample>, aggrega
   const latestAge = timeUs - selected[selected.length - 1].t;
   const toleranceUs = Math.max(1000, result.expectedUs * 1.5);
   if (latestAge < 0 || latestAge > toleranceUs) return null;
-  return prepareRun(selected, aggregationMs, requestedFftSize);
+  return prepareRun(selected, aggregationMs, requestedFftSize, result.expectedUs);
 }
 
 function analyzePrepared(prepared: SpectrumPreparation, requestedWindowSeconds: number, settings: SpectralSettings, amplitudeReference?: number): SignalsSpectrum | null {
@@ -248,7 +292,7 @@ export function analyzePreparedSpectrogramColumn(timeline: PreparedSpectrogramTi
   const observations = run.observations.slice(analysisStart, observationCount);
   const effectiveSampleRate = timeline.aggregationMs > 0
     ? 1000 / timeline.aggregationMs
-    : (observationCount - 1) * 1e6 / (latest.t - run.observations[0].t);
+    : 1e6 / timeline.expectedUs;
   const prepared: SpectrumPreparation = {
     observations,
     effectiveSampleRate,
