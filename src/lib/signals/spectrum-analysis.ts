@@ -24,6 +24,10 @@ export interface SignalsSpectrum extends SpectrumPreparation {
   referencePsd: number;
 }
 
+export interface SpectrogramColumn extends SignalsSpectrum {
+  timeUs: number;
+}
+
 function nativeInterval(samples: ReadonlyArray<Sample>) {
   const intervals: number[] = [];
   for (let index = 1; index < samples.length; index++) {
@@ -41,7 +45,7 @@ function largestPowerOfTwo(value: number, maximum: number) {
   return result;
 }
 
-export function prepareSpectrumSamples(samples: ReadonlyArray<Sample>, aggregationMs: number, requestedFftSize: SpectralFftSize = 'auto'): SpectrumPreparation | null {
+function spectrumRuns(samples: ReadonlyArray<Sample>, aggregationMs: number) {
   if (!samples.length) return null;
   let observations: SpectrumObservation[];
   let expectedUs: number;
@@ -71,7 +75,10 @@ export function prepareSpectrumSamples(samples: ReadonlyArray<Sample>, aggregati
   }
   if (run.length) runs.push(run);
 
-  const selected = runs.reverse().find((candidate) => candidate.length >= MIN_FFT_LENGTH);
+  return { runs, expectedUs };
+}
+
+function prepareRun(selected: SpectrumObservation[] | undefined, aggregationMs: number, requestedFftSize: SpectralFftSize) {
   if (!selected) return null;
   const fftLength = largestPowerOfTwo(selected.length, requestedFftSize === 'auto' ? AUTO_MAX_FFT_LENGTH : requestedFftSize);
   if (fftLength < MIN_FFT_LENGTH) return null;
@@ -88,24 +95,25 @@ export function prepareSpectrumSamples(samples: ReadonlyArray<Sample>, aggregati
   };
 }
 
-export function analyzeSpectrumSamples(
-  samples: ReadonlyArray<Sample>,
-  aggregationMs: number,
-  requestedWindowSeconds: number,
-  settings: SpectralSettings = defaultSpectralSettings,
-  rangeStart = -Infinity,
-  rangeEnd = Infinity,
-): SignalsSpectrum | null {
-  let selectedSamples = samples;
-  if (aggregationMs > 0 && (Number.isFinite(rangeStart) || Number.isFinite(rangeEnd))) {
-    const bucketUs = aggregationMs * 1000;
-    const includedBuckets = new Set(aggregateWaveformSamples(samples, bucketUs)
-      .filter((sample) => sample.t >= rangeStart && sample.t <= rangeEnd)
-      .map((sample) => sample.bucket));
-    selectedSamples = samples.filter((sample) => includedBuckets.has(Math.floor(sample.t / bucketUs)));
-  }
-  const prepared = prepareSpectrumSamples(selectedSamples, aggregationMs, settings.fftSize);
-  if (!prepared) return null;
+export function prepareSpectrumSamples(samples: ReadonlyArray<Sample>, aggregationMs: number, requestedFftSize: SpectralFftSize = 'auto'): SpectrumPreparation | null {
+  const result = spectrumRuns(samples, aggregationMs);
+  if (!result) return null;
+  return prepareRun([...result.runs].reverse().find((candidate) => candidate.length >= MIN_FFT_LENGTH), aggregationMs, requestedFftSize);
+}
+
+export function prepareSpectrumSamplesAt(samples: ReadonlyArray<Sample>, aggregationMs: number, timeUs: number, requestedFftSize: SpectralFftSize = 'auto'): SpectrumPreparation | null {
+  const eligible = samples.filter((sample) => sample.t <= timeUs);
+  const result = spectrumRuns(eligible, aggregationMs);
+  if (!result?.runs.length) return null;
+  const selected = result.runs[result.runs.length - 1];
+  if (selected.length < MIN_FFT_LENGTH) return null;
+  const latestAge = timeUs - selected[selected.length - 1].t;
+  const toleranceUs = Math.max(1000, result.expectedUs * 1.5);
+  if (latestAge < 0 || latestAge > toleranceUs) return null;
+  return prepareRun(selected, aggregationMs, requestedFftSize);
+}
+
+function analyzePrepared(prepared: SpectrumPreparation, requestedWindowSeconds: number, settings: SpectralSettings): SignalsSpectrum | null {
   const values = Float64Array.from(prepared.observations, (sample) => sample.v);
   const psd = welchPsd(values, prepared.effectiveSampleRate, prepared.fftLength, settings.welchSegments, 0.5);
   if (!psd) return null;
@@ -127,6 +135,38 @@ export function analyzeSpectrumSamples(
     peakFrequency: peak?.frequency ?? 0,
     referencePsd: psd.fullScaleSinePsd * amplitudeReference * amplitudeReference,
   };
+}
+
+export function analyzeSpectrumSamples(
+  samples: ReadonlyArray<Sample>,
+  aggregationMs: number,
+  requestedWindowSeconds: number,
+  settings: SpectralSettings = defaultSpectralSettings,
+  rangeStart = -Infinity,
+  rangeEnd = Infinity,
+): SignalsSpectrum | null {
+  let selectedSamples = samples;
+  if (aggregationMs > 0 && (Number.isFinite(rangeStart) || Number.isFinite(rangeEnd))) {
+    const bucketUs = aggregationMs * 1000;
+    const includedBuckets = new Set(aggregateWaveformSamples(samples, bucketUs)
+      .filter((sample) => sample.t >= rangeStart && sample.t <= rangeEnd)
+      .map((sample) => sample.bucket));
+    selectedSamples = samples.filter((sample) => includedBuckets.has(Math.floor(sample.t / bucketUs)));
+  }
+  const prepared = prepareSpectrumSamples(selectedSamples, aggregationMs, settings.fftSize);
+  if (!prepared) return null;
+  return analyzePrepared(prepared, requestedWindowSeconds, settings);
+}
+
+export function analyzeSpectrogramColumn(samples: ReadonlyArray<Sample>, timeUs: number, aggregationMs: number, settings: SpectralSettings = defaultSpectralSettings): SpectrogramColumn | null {
+  const prepared = prepareSpectrumSamplesAt(samples, aggregationMs, timeUs, settings.fftSize);
+  if (!prepared) return null;
+  const spectrum = analyzePrepared(prepared, prepared.fftDurationSeconds, settings);
+  return spectrum ? { ...spectrum, timeUs } : null;
+}
+
+export function spectrogramHopUs(aggregationMs: number) {
+  return Math.max(100, aggregationMs) * 1000;
 }
 
 export function analyzeSpectrumRing(

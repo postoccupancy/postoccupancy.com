@@ -11,6 +11,7 @@ import { useSettings } from '@/components/settings/settings-provider';
 import { useSignalRouter } from './router-provider';
 import { ScopePlot } from './scope-plot';
 import { SpectrumPlot } from './spectrum-plot';
+import { SpectrogramPlot } from './spectrogram-plot';
 
 // Presentation hints only: incoming metadata determines which channels exist.
 const labels: Record<string, string> = { temperature: 'Temperature', humidity: 'Humidity', pressure: 'Pressure', power: 'Power', 'solar-power': 'Solar input power', rms: 'Microphone RMS' };
@@ -104,9 +105,7 @@ export function SignalsDashboard() {
               </Stack>
               {view === 'waveform' && <ScopePlot channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} color={colors[channel.param] || '#9bc9d8'} scale={scale} decimals={decimals} windowSeconds={windowSeconds} aggregationMs={aggregationMs} label={`${source} ${name}: ${value}. Last ${windowSeconds} seconds. Aggregation ${aggregationLabel(aggregationMs)}${stale ? ', stale data' : ''}.`} />}
               {view === 'spectrum' && <SpectrumPlot channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} color={colors[channel.param] || '#9bc9d8'} windowSeconds={windowSeconds} aggregationMs={aggregationMs} spectralSettings={spectralSettings} refreshKey={channel.receivedAt} label={`${source} ${name}`} />}
-              {view === 'spectrogram' && <Box role="img" aria-label={`${source} ${name} spectrogram placeholder`} sx={{ display: 'grid', placeItems: 'center', width: '100%', height: 170, bgcolor: 'whitesmoke', color: 'text.secondary' }}>
-                <Typography variant="body2">Spectrogram coming soon</Typography>
-              </Box>}
+              {view === 'spectrogram' && <SpectrogramPlot channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} windowSeconds={windowSeconds} aggregationMs={aggregationMs} spectralSettings={spectralSettings} refreshKey={channel.receivedAt} label={`${source} ${name}`} />}
             </Box>
           );
         })}

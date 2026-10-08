@@ -1,7 +1,7 @@
 import { expect, test, type WebSocketRoute } from '@playwright/test';
 import { aggregateWaveformSamples } from '../src/components/signals/scope-plot';
 import { SampleRing } from '../src/lib/signals/sample-ring';
-import { analyzeSpectrumRing, analyzeSpectrumSamples, prepareSpectrumSamples } from '../src/lib/signals/spectrum-analysis';
+import { analyzeSpectrogramColumn, analyzeSpectrumRing, analyzeSpectrumSamples, prepareSpectrumSamples, prepareSpectrumSamplesAt, spectrogramHopUs } from '../src/lib/signals/spectrum-analysis';
 import { defaultSpectralSettings } from '../src/lib/signals/spectral-settings';
 import { frequencyPosition } from '../src/lib/visualizer/frequency-position';
 
@@ -90,9 +90,31 @@ test('discovers channels, converts power, and shares one socket across routes', 
   await expect(temperature.getByRole('img')).toHaveAttribute('data-spectrum-mode', 'raw');
   await expect(temperature.getByRole('img')).toHaveAttribute('data-spectrum-frequency-scale', 'linear');
   await page.getByRole('button', { name: 'Spectrogram', exact: true }).click();
-  await expect(page.getByRole('img', { name: /spectrogram placeholder/ })).toHaveCount(10);
-  await expect(temperature.getByRole('img')).toHaveAccessibleName('Electric Sky Temperature spectrogram placeholder');
-  await expect(temperature).toContainText('Spectrogram coming soon');
+  await expect(page.getByRole('img', { name: /Spectrogram/ })).toHaveCount(10);
+  await expect(temperature.getByRole('img')).toHaveAttribute('data-spectrogram-requested-fft', '512');
+  await expect(temperature.getByRole('img')).toHaveAttribute('data-spectrogram-welch', '1');
+  await expect(temperature.getByRole('img')).toHaveAttribute('data-spectrogram-bands', 'false');
+  await expect(temperature.getByRole('img')).toHaveAttribute('data-spectrogram-mode', 'raw');
+  await expect(temperature.getByRole('img')).toHaveAttribute('data-spectrogram-frequency-scale', 'linear');
+  await expect(temperature.getByRole('img')).toHaveAttribute('data-spectrogram-hop-ms', '100');
+  await expect(Number(await temperature.getByRole('img').getAttribute('data-spectrogram-columns'))).toBeGreaterThan(0);
+  const firstColumn = await temperature.getByRole('img').getAttribute('data-spectrogram-first-time');
+  await timeWindow.focus(); await timeWindow.press('ArrowLeft');
+  await expect(timeWindow).toHaveValue('7');
+  await expect(temperature.getByRole('img')).toHaveAttribute('data-spectrogram-requested-fft', '512');
+  await expect(temperature.getByRole('img')).toHaveAttribute('data-spectrogram-first-time', firstColumn!);
+  await timeWindow.press('ArrowRight');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Signals', exact: true }).click();
+  const spectrogramFft = page.getByRole('combobox', { name: 'FFT size' });
+  await spectrogramFft.click(); await page.getByRole('option', { name: '256', exact: true }).click();
+  await page.getByRole('button', { name: 'Close settings' }).click();
+  await expect(temperature.getByRole('img')).toHaveAttribute('data-spectrogram-requested-fft', '256');
+  await expect.poll(async () => Number(await temperature.getByRole('img').getAttribute('data-spectrogram-fft'))).toBeLessThanOrEqual(256);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Signals', exact: true }).click();
+  await page.getByRole('combobox', { name: 'FFT size' }).click(); await page.getByRole('option', { name: '512', exact: true }).click();
+  await page.getByRole('button', { name: 'Close settings' }).click();
   await page.getByRole('button', { name: 'Waveform', exact: true }).click();
   await expect(timeWindow).toHaveValue('8');
   await expect(aggregation).toHaveValue('4');
@@ -203,6 +225,47 @@ test('signals frequency scales use the visualizer positioning semantics', () => 
   expect(frequencyPosition(10, 1, 100, 'log')).toBeCloseTo(0.5);
   expect(frequencyPosition(10, 1, 100, 'linear')).toBeCloseTo(9 / 99);
   expect(frequencyPosition(10, 1, 100, 'expanded')).toBeCloseTo(Math.sqrt(9 / 99));
+});
+
+test('spectrogram columns are timestamp anchored, reuse Welch DSP, and locate a periodic peak', () => {
+  const samples = Array.from({ length: 1201 }, (_, index) => ({
+    seq: index,
+    t: index * 10_000,
+    v: Math.sin(2 * Math.PI * 5 * index / 100),
+  }));
+  const column = analyzeSpectrogramColumn(samples, 10_000_000, 0, { ...defaultSpectralSettings, fftSize: 512 })!;
+  expect(column.timeUs).toBe(10_000_000);
+  expect(column.fftLength).toBe(512);
+  expect(column.welchSegmentCount).toBe(2);
+  expect(column.fftDurationSeconds).toBeCloseTo(5.12);
+  expect(Math.abs(column.peakFrequency - 5)).toBeLessThanOrEqual(column.resolution);
+});
+
+test('spectrogram never crosses gaps or substitutes an older run at a newer timestamp', () => {
+  const older = Array.from({ length: 600 }, (_, index) => ({ seq: index, t: index * 10_000, v: 1 }));
+  const short = Array.from({ length: 7 }, (_, index) => ({ seq: 700 + index, t: 7_000_000 + index * 10_000, v: 2 }));
+  expect(prepareSpectrumSamplesAt([...older, ...short], 0, 7_060_000)).toBeNull();
+  expect(analyzeSpectrogramColumn([...older, ...short], 7_060_000, 0)).toBeNull();
+
+  const usable = [...short, { seq: 707, t: 7_070_000, v: 2 }];
+  const prepared = prepareSpectrumSamplesAt([...older, ...usable], 0, 7_070_000)!;
+  expect(prepared.observations).toHaveLength(8);
+  expect(prepared.observations.every((observation) => observation.v === 2)).toBe(true);
+  expect(prepared.fftLength).toBe(8);
+  expect(prepareSpectrumSamplesAt([...older, ...usable], 0, 7_200_000)).toBeNull();
+});
+
+test('spectrogram aggregation preserves empty buckets and hop policy follows aggregation', () => {
+  const samples = [
+    { seq: 0, t: 10_000, v: 1 }, { seq: 1, t: 90_000, v: 3 },
+    { seq: 2, t: 110_000, v: 5 }, { seq: 3, t: 190_000, v: 7 },
+    ...Array.from({ length: 8 }, (_, index) => ({ seq: 10 + index, t: 300_000 + index * 100_000 + 10_000, v: index })),
+  ];
+  expect(prepareSpectrumSamplesAt(samples, 100, 250_000)).toBeNull();
+  expect(spectrogramHopUs(0)).toBe(100_000);
+  expect(spectrogramHopUs(100)).toBe(100_000);
+  expect(spectrogramHopUs(250)).toBe(250_000);
+  expect(spectrogramHopUs(1000)).toBe(1_000_000);
 });
 
 test('shows stale data, reconnects, and accepts a device clock reset', async ({ page }) => {
