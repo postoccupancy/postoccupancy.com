@@ -178,7 +178,7 @@ function buildRunRaster(
   return raster;
 }
 
-export const SpectrogramPlot = memo(function SpectrogramPlot({ channel, clock, delay, windowSeconds, aggregationMs, spectralSettings, refreshKey, label }: {
+export const SpectrogramPlot = memo(function SpectrogramPlot({ channel, clock, delay, windowSeconds, aggregationMs, spectralSettings, refreshKey, label, onAnalysisRate }: {
   channel: Channel;
   clock?: NodeClock;
   delay: number;
@@ -187,6 +187,7 @@ export const SpectrogramPlot = memo(function SpectrogramPlot({ channel, clock, d
   spectralSettings: SpectralSettings;
   refreshKey: number;
   label: string;
+  onAnalysisRate?: (channelId: string, aggregationMs: number, rate: number) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const historyRef = useRef<SpectrogramColumn[]>([]);
@@ -364,6 +365,9 @@ export const SpectrogramPlot = memo(function SpectrogramPlot({ channel, clock, d
   }, [aggregationMs, channel, clock, delay, revision, frequencyScale, spectralMode, windowSeconds]);
 
   const latest = historyRef.current[historyRef.current.length - 1];
+  useEffect(() => {
+    if (latest) onAnalysisRate?.(channel.id, aggregationMs, latest.effectiveSampleRate);
+  }, [aggregationMs, channel.id, latest, onAnalysisRate]);
   const state = latest
     ? `${label}. Spectrogram. ${historyRef.current.length} timestamped columns. FFT ${latest.fftLength}. Welch ${latest.welchSegmentCount}.`
     : `${label}. Spectrogram. Insufficient contiguous data.`;

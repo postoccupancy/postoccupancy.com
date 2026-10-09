@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Box from '@mui/material/Box';
 import Slider from '@mui/material/Slider';
 import Stack from '@mui/material/Stack';
@@ -12,6 +12,8 @@ import { useSignalRouter } from './router-provider';
 import { ScopePlot } from './scope-plot';
 import { SpectrumPlot } from './spectrum-plot';
 import { SpectrogramPlot } from './spectrogram-plot';
+import { estimateAnalysisSampleRate } from '@/lib/signals/spectrum-analysis';
+import type { Channel, NodeClock } from '@/lib/signals/router-client';
 
 // Presentation hints only: incoming metadata determines which channels exist.
 const labels: Record<string, string> = { temperature: 'Temperature', humidity: 'Humidity', pressure: 'Pressure', power: 'Power', 'solar-power': 'Solar input power', rms: 'Microphone RMS' };
@@ -24,6 +26,37 @@ const aggregationChoices = [0, 10, 20, 50, 100, 250, 500, 1000] as const;
 const aggregationLabel = (milliseconds: number) => milliseconds === 0
   ? 'Off'
   : `${milliseconds === 1000 ? '1 s (1000 ms)' : `${milliseconds} ms`} · ${(1000 / milliseconds).toFixed(1)} Hz`;
+
+export function formatAnalysisSampleRate(rate: number) {
+  const nearestInteger = Math.round(rate);
+  const value = Math.abs(rate - nearestInteger) < 0.05 ? nearestInteger : Number(rate.toFixed(1));
+  return `${value} Hz`;
+}
+
+function WaveformRateReporter({ channel, clock, delay, windowSeconds, aggregationMs, refreshKey, onAnalysisRate }: {
+  channel: Channel;
+  clock?: NodeClock;
+  delay: number;
+  windowSeconds: number;
+  aggregationMs: number;
+  refreshKey: number;
+  onAnalysisRate: (channelId: string, aggregationMs: number, rate: number) => void;
+}) {
+  useEffect(() => {
+    void refreshKey;
+    if (!clock) return;
+    const end = clock.timeUs + (performance.now() - clock.atMs) * 1000 - delay * 1e6;
+    const start = end - windowSeconds * 1e6;
+    const aggregationUs = aggregationMs * 1000;
+    const collectionStart = aggregationUs ? Math.floor(start / aggregationUs) * aggregationUs : start;
+    const samples: Array<{ seq: number; t: number; v: number }> = [];
+    channel.ring.visitRange(collectionStart, end, (sample) => samples.push(sample));
+    const rate = estimateAnalysisSampleRate(samples, aggregationMs);
+    if (!rate) return;
+    onAnalysisRate(channel.id, aggregationMs, rate);
+  }, [aggregationMs, channel, clock, delay, onAnalysisRate, refreshKey, windowSeconds]);
+  return null;
+}
 
 export function SignalsDashboard() {
   const router = useSignalRouter();
@@ -39,6 +72,13 @@ export function SignalsDashboard() {
   const [view, setView] = useState<'waveform' | 'spectrum' | 'spectrogram'>('waveform');
   const [windowIndex, setWindowIndex] = useState(7);
   const [aggregationIndex, setAggregationIndex] = useState(0);
+  const [analysisRates, setAnalysisRates] = useState<Record<string, number>>({});
+  const reportAnalysisRate = useCallback((channelId: string, aggregation: number, rate: number) => {
+    const key = `${channelId}/${aggregation}`;
+    setAnalysisRates((current) => current[key] && formatAnalysisSampleRate(current[key]) === formatAnalysisSampleRate(rate)
+      ? current
+      : { ...current, [key]: rate });
+  }, []);
   const windowSeconds = windowChoices[windowIndex];
   const aggregationMs = aggregationChoices[aggregationIndex];
   const channels = [...router.channels.values()].filter((channel) => !hiddenSignals.has(channel.param));
@@ -94,18 +134,24 @@ export function SignalsDashboard() {
           const latest = channel.ring.latest();
           const stale = channel.receivedAt === 0 || now - channel.receivedAt >= 5000 || router.status !== 'connected';
           const value = latest ? `${(latest.v * scale).toFixed(decimals)} ${unit}`.trim() : '—';
+          const analysisRate = analysisRates[`${channel.id}/${aggregationMs}`];
           return (
             <Box component="section" aria-label={`${source} ${name}`} key={channel.id} sx={{ minWidth: 0, border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
               <Stack direction="row" spacing={1} sx={{ px: 1.5, py: 1, justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap' }}>
                 <Stack direction="row" spacing={1} sx={{ alignItems: 'baseline' }}>
-                  <Typography component="h2" variant="body2" sx={{ fontWeight: 600 }}>{name}</Typography>
+                  <Typography component="h2" variant="body2" sx={{ fontWeight: 600 }}>
+                    {name}
+                    {analysisRate && <Box component="span" data-analysis-sample-rate="true" sx={{ color: 'text.secondary', fontWeight: 400 }}>
+                      {' · '}{formatAnalysisSampleRate(analysisRate)}
+                    </Box>}
+                  </Typography>
                   <Typography variant="caption" color="text.secondary">{source}</Typography>
                 </Stack>
                 <Typography component="output" aria-live="off" variant="body2" sx={{ fontVariantNumeric: 'tabular-nums', color: stale ? 'text.secondary' : 'text.primary' }}>{value}{stale && latest ? ' · stale' : ''}</Typography>
               </Stack>
-              {view === 'waveform' && <ScopePlot channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} color={colors[channel.param] || '#9bc9d8'} scale={scale} decimals={decimals} windowSeconds={windowSeconds} aggregationMs={aggregationMs} label={`${source} ${name}: ${value}. Last ${windowSeconds} seconds. Aggregation ${aggregationLabel(aggregationMs)}${stale ? ', stale data' : ''}.`} />}
-              {view === 'spectrum' && <SpectrumPlot channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} color={colors[channel.param] || '#9bc9d8'} windowSeconds={windowSeconds} aggregationMs={aggregationMs} spectralSettings={spectralSettings} refreshKey={channel.receivedAt} label={`${source} ${name}`} />}
-              {view === 'spectrogram' && <SpectrogramPlot channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} windowSeconds={windowSeconds} aggregationMs={aggregationMs} spectralSettings={spectralSettings} refreshKey={channel.receivedAt} label={`${source} ${name}`} />}
+              {view === 'waveform' && <><WaveformRateReporter channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} windowSeconds={windowSeconds} aggregationMs={aggregationMs} refreshKey={channel.receivedAt} onAnalysisRate={reportAnalysisRate} /><ScopePlot channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} color={colors[channel.param] || '#9bc9d8'} scale={scale} decimals={decimals} windowSeconds={windowSeconds} aggregationMs={aggregationMs} label={`${source} ${name}: ${value}. Last ${windowSeconds} seconds. Aggregation ${aggregationLabel(aggregationMs)}${stale ? ', stale data' : ''}.`} /></>}
+              {view === 'spectrum' && <SpectrumPlot channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} color={colors[channel.param] || '#9bc9d8'} windowSeconds={windowSeconds} aggregationMs={aggregationMs} spectralSettings={spectralSettings} refreshKey={channel.receivedAt} label={`${source} ${name}`} onAnalysisRate={reportAnalysisRate} />}
+              {view === 'spectrogram' && <SpectrogramPlot channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} windowSeconds={windowSeconds} aggregationMs={aggregationMs} spectralSettings={spectralSettings} refreshKey={channel.receivedAt} label={`${source} ${name}`} onAnalysisRate={reportAnalysisRate} />}
             </Box>
           );
         })}

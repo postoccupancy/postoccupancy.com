@@ -1,5 +1,6 @@
 import { expect, test, type WebSocketRoute } from '@playwright/test';
 import { aggregateWaveformSamples } from '../src/components/signals/scope-plot';
+import { formatAnalysisSampleRate } from '../src/components/signals/signals-dashboard';
 import { interpolateSpectrogramPower, legacySpectrogramHsl, mergeSpectrogramColumns, newestSpectrogramEdgeEnd, spectrogramFrequencyBounds, spectrogramFrequencyLabels, spectrogramPresentationEdgeEnd, spectrogramQualityLabel, spectrogramRasterTiles, spectrogramTimeRuns, visibleSpectrogramRuns } from '../src/components/signals/spectrogram-plot';
 import { SampleRing } from '../src/lib/signals/sample-ring';
 import { analyzePreparedSpectrogramBackfill, analyzePreparedSpectrogramColumn, analyzeSpectrogramBackfill, analyzeSpectrogramColumn, analyzeSpectrumRing, analyzeSpectrumSamples, prepareSpectrogramTimeline, prepareSpectrumSamples, prepareSpectrumSamplesAt, spectrogramHopUs } from '../src/lib/signals/spectrum-analysis';
@@ -51,6 +52,8 @@ test('discovers channels, converts power, and shares one socket across routes', 
   await expect(page.getByRole('region', { name: 'invalid', exact: true })).toHaveCount(0);
   const temperature = page.getByRole('region', { name: 'Electric Sky Temperature', exact: true });
   await expect(page.getByRole('button', { name: 'Waveform', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(temperature.getByRole('heading', { level: 2 })).toContainText('Temperature · 100 Hz');
+  await expect(page.getByText('determining rate…')).toHaveCount(0);
   const timeWindow = page.getByRole('slider', { name: 'Time Window', exact: true });
   const aggregation = page.getByRole('slider', { name: 'Aggregation', exact: true });
   await expect(timeWindow).toHaveValue('7');
@@ -64,6 +67,11 @@ test('discovers channels, converts power, and shares one socket across routes', 
   await page.getByRole('button', { name: 'Spectrum', exact: true }).click();
   await expect(page.getByRole('img', { name: /Spectrum/ })).toHaveCount(10);
   await expect(page.locator('canvas[data-spectrum-rate="10"]')).toHaveCount(10);
+  await expect(page.locator('[data-analysis-sample-rate]')).toHaveCount(10);
+  await expect(temperature.getByRole('heading', { level: 2 })).toContainText('Temperature · 10 Hz');
+  await aggregation.focus(); await aggregation.press('Home');
+  await expect(temperature.getByRole('heading', { level: 2 })).toContainText('Temperature · 100 Hz');
+  for (let index = 0; index < 4; index++) await aggregation.press('ArrowRight');
   await expect(temperature.getByRole('img')).toHaveAttribute('data-spectrum-rate', '10');
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByRole('button', { name: 'Signals', exact: true }).click();
@@ -154,6 +162,12 @@ test('waveform aggregation averages fixed buckets and leaves empty buckets absen
     { bucket: 1, t: 150_000, v: 6 },
     { bucket: 3, t: 350_000, v: 9 },
   ]);
+});
+
+test('analysis sample rates use compact Hz formatting without implying FFT resolution', () => {
+  expect(formatAnalysisSampleRate(100)).toBe('100 Hz');
+  expect(formatAnalysisSampleRate(99.996)).toBe('100 Hz');
+  expect(formatAnalysisSampleRate(508.63)).toBe('508.6 Hz');
 });
 
 test('spectrum reconstructs short native and aggregate gaps on one shared analysis grid', () => {

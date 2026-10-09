@@ -7,7 +7,7 @@ import { analyzeSpectrumRing, type SignalsSpectrum } from '@/lib/signals/spectru
 import type { SpectralSettings } from '@/lib/signals/spectral-settings';
 import { frequencyPosition } from '@/lib/visualizer/frequency-position';
 
-export const SpectrumPlot = memo(function SpectrumPlot({ channel, clock, delay, windowSeconds, aggregationMs, spectralSettings, color, refreshKey, label }: {
+export const SpectrumPlot = memo(function SpectrumPlot({ channel, clock, delay, windowSeconds, aggregationMs, spectralSettings, color, refreshKey, label, onAnalysisRate }: {
   channel: Channel;
   clock?: NodeClock;
   delay: number;
@@ -17,6 +17,7 @@ export const SpectrumPlot = memo(function SpectrumPlot({ channel, clock, delay, 
   color: string;
   refreshKey: number;
   label: string;
+  onAnalysisRate?: (channelId: string, aggregationMs: number, rate: number) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const heldRef = useRef<{ key: string; spectrum: SignalsSpectrum | null }>({ key: '', spectrum: null });
@@ -36,6 +37,9 @@ export const SpectrumPlot = memo(function SpectrumPlot({ channel, clock, delay, 
         ? { ...heldRef.current.spectrum, quality: { ...heldRef.current.spectrum.quality, status: 'held' as const } }
         : null;
   }, [candidate, holdKey]);
+  useEffect(() => {
+    if (spectrum) onAnalysisRate?.(channel.id, aggregationMs, spectrum.effectiveSampleRate);
+  }, [aggregationMs, channel.id, onAnalysisRate, spectrum]);
 
   useEffect(() => {
     const canvas = canvasRef.current;

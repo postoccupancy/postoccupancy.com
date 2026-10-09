@@ -111,6 +111,12 @@ function nativeInterval(samples: ReadonlyArray<Sample>) {
   return estimates.length % 2 ? estimates[middle] : (estimates[middle - 1] + estimates[middle]) / 2;
 }
 
+export function estimateAnalysisSampleRate(samples: ReadonlyArray<Sample>, aggregationMs: number) {
+  if (aggregationMs > 0) return 1000 / aggregationMs;
+  const intervalUs = nativeInterval(samples);
+  return intervalUs > 0 ? 1e6 / intervalUs : null;
+}
+
 function largestPowerOfTwo(value: number, maximum: number) {
   let result = 1;
   while (result * 2 <= value && result * 2 <= maximum) result *= 2;
