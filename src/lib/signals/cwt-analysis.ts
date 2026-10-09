@@ -69,12 +69,22 @@ export interface CwtColumn {
 
 export interface CwtUnavailable {
   status: 'unsupported' | 'insufficient-data';
+  reasonCode: 'unsupported-frequency-range' | 'no-runs' | 'timestamp-outside-runs';
   reason: string;
   requestedTimeUs: number;
   effectiveSampleRate: number;
 }
 
 export type CwtResult = CwtColumn | CwtUnavailable;
+
+export interface CwtBatchAnalysis {
+  results: CwtResult[];
+  columns: CwtColumn[];
+  attempted: number;
+  successful: number;
+  rejected: number;
+  rejectionReasons: Record<string, number>;
+}
 
 const DEFAULT_MINIMUM_HZ = 0.5;
 const DEFAULT_FREQUENCY_COUNT = 48;
@@ -142,6 +152,7 @@ export function prepareCwtAnalysis(
   if (!created) {
     return {
       status: 'unsupported',
+      reasonCode: 'unsupported-frequency-range',
       reason: 'The effective sample rate does not support the requested CWT frequency range.',
       requestedTimeUs: 0,
       effectiveSampleRate: input.effectiveSampleRate,
@@ -158,6 +169,7 @@ export function prepareCwtAnalysis(
   if (!runs.length) {
     return {
       status: 'insufficient-data',
+      reasonCode: 'no-runs',
       reason: 'No reconstructed run contains enough samples for CWT analysis.',
       requestedTimeUs: 0,
       effectiveSampleRate: input.effectiveSampleRate,
@@ -167,9 +179,19 @@ export function prepareCwtAnalysis(
 }
 
 function nearestIndex(observations: SpectrumObservation[], timeUs: number, intervalUs: number) {
-  const index = Math.round((timeUs - observations[0].t) / intervalUs);
-  if (index < 0 || index >= observations.length) return -1;
-  return Math.abs(observations[index].t - timeUs) <= intervalUs * 0.51 ? index : -1;
+  let low = 0;
+  let high = observations.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (observations[middle].t < timeUs) low = middle + 1;
+    else high = middle;
+  }
+  const after = low < observations.length ? low : -1;
+  const before = low > 0 ? low - 1 : -1;
+  const index = before < 0 ? after : after < 0
+    ? before
+    : Math.abs(observations[before].t - timeUs) <= Math.abs(observations[after].t - timeUs) ? before : after;
+  return index >= 0 && Math.abs(observations[index].t - timeUs) <= Math.max(1, intervalUs * 0.51) ? index : -1;
 }
 
 export function analyzeCwtAtTimestamp(prepared: PreparedCwtAnalysis, requestedTimeUs: number): CwtResult {
@@ -183,6 +205,7 @@ export function analyzeCwtAtTimestamp(prepared: PreparedCwtAnalysis, requestedTi
   if (!run) {
     return {
       status: 'insufficient-data',
+      reasonCode: 'timestamp-outside-runs',
       reason: 'The requested timestamp is outside every reconstructed sample run.',
       requestedTimeUs,
       effectiveSampleRate: prepared.effectiveSampleRate,
@@ -231,4 +254,30 @@ export function analyzeCwtAtTimestamp(prepared: PreparedCwtAnalysis, requestedTi
 
 export function analyzeCwtAtTimestamps(prepared: PreparedCwtAnalysis, requestedTimesUs: ReadonlyArray<number>) {
   return requestedTimesUs.map((timeUs) => analyzeCwtAtTimestamp(prepared, timeUs));
+}
+
+export function analyzeCwtAtTimestampsWithDiagnostics(
+  prepared: PreparedCwtAnalysis,
+  requestedTimesUs: ReadonlyArray<number>,
+): CwtBatchAnalysis {
+  const results = analyzeCwtAtTimestamps(prepared, requestedTimesUs);
+  const columns = results.filter((result): result is CwtColumn => result.status === 'ok');
+  const rejectionReasons: Record<string, number> = {};
+  for (const result of results) {
+    if (result.status === 'ok') continue;
+    rejectionReasons[result.reasonCode] = (rejectionReasons[result.reasonCode] ?? 0) + 1;
+  }
+  return {
+    results,
+    columns,
+    attempted: results.length,
+    successful: columns.length,
+    rejected: results.length - columns.length,
+    rejectionReasons,
+  };
+}
+
+export function cwtRefreshHorizonUs(prepared: PreparedCwtAnalysis) {
+  const maximumHalfWidth = prepared.kernels.reduce((maximum, kernel) => Math.max(maximum, kernel.halfWidthSamples), 0);
+  return maximumHalfWidth / prepared.effectiveSampleRate * 1e6;
 }

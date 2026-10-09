@@ -3,8 +3,10 @@ import {
   mergeScalagramColumns,
   pruneScalagramColumns,
   scalagramBandOpacity,
+  scalagramColumnRevision,
   scalagramFrequencyLabels,
   scalagramPowerLevel,
+  scalagramPowerReference,
   scalagramQualityLabel,
   scalagramRasterTiles,
   scalagramTimeRuns,
@@ -37,14 +39,14 @@ function periodicBatch(node: string, param: string, frequency = 5, start = 100_0
 
 test('scalagram helpers preserve timestamp gaps, bounds, and bounded history', () => {
   const columns = [cwtColumn(0), cwtColumn(500_000), cwtColumn(2_000_000)];
-  expect(scalagramTimeRuns(columns)).toHaveLength(2);
-  expect(scalagramRasterTiles(columns)).toHaveLength(2);
+  expect(scalagramTimeRuns(columns, 500_000)).toHaveLength(2);
+  expect(scalagramRasterTiles(columns, 500_000)).toHaveLength(2);
   const inserted = mergeScalagramColumns([columns[0]], [columns[1], columns[0]]);
   expect(inserted).toHaveLength(2);
   expect(inserted.at(-1)?.requestedTimeUs).toBe(500_000);
   const retained = pruneScalagramColumns(Array.from({ length: 150 }, (_, index) => cwtColumn(index * SCALAGRAM_HOP_US)), 74_500_000);
-  expect(retained).toHaveLength(131);
-  expect(scalagramRasterTiles(retained).length).toBeLessThanOrEqual(10);
+  expect(retained).toHaveLength(112);
+  expect(scalagramRasterTiles(retained).length).toBeLessThanOrEqual(9);
   expect(scalagramFrequencyLabels(columns[0].frequenciesHz)).toEqual({ top: '40 Hz', bottom: '0.5 Hz' });
 });
 
@@ -54,9 +56,24 @@ test('scalagram uses stable logarithmic power and distinct boundary opacity', ()
   expect(scalagramPowerLevel(1e-3, 1)).toBeCloseTo(0.5);
   expect(scalagramPowerLevel(1e-3, 1)).toBe(scalagramPowerLevel(1e-3, 1));
   expect(scalagramBandOpacity(true, false)).toBe(255);
-  expect(scalagramBandOpacity(false, true)).toBe(90);
+  expect(scalagramBandOpacity(false, true)).toBe(180);
   expect(scalagramBandOpacity(false, false)).toBe(0);
   expect(scalagramQualityLabel(cwtColumn(0, { quality: 'reconstructed' }))).toBe('run reconstructed · 10.0% interpolated');
+});
+
+test('historical calibration is deterministic and column maturation invalidates its raster key', () => {
+  const quiet = cwtColumn(0);
+  quiet.power.fill(0);
+  const normal = cwtColumn(500_000);
+  const louder = cwtColumn(1_000_000);
+  louder.power = Float64Array.from(louder.power, (power) => power * 4);
+  const ordered = [quiet, normal, louder];
+  expect(scalagramPowerReference(ordered)).toBe(scalagramPowerReference([...ordered].reverse()));
+  expect(scalagramPowerReference([quiet])).toBe(1e-24);
+  const edge = cwtColumn(2_000_000, { valid: false });
+  const revision = scalagramColumnRevision(edge);
+  edge.valid.fill(1); edge.edgeAffected.fill(0); edge.power[0] *= 2;
+  expect(scalagramColumnRevision(edge)).not.toBe(revision);
 });
 
 test('renders ten progressive scalagrams and cancels obsolete aggregation work', async ({ page }) => {
@@ -75,10 +92,14 @@ test('renders ten progressive scalagrams and cancels obsolete aggregation work',
   const plots = page.locator('canvas[data-scalagram-columns]');
   await expect(plots).toHaveCount(10);
   await expect.poll(async () => Number(await plots.first().getAttribute('data-scalagram-columns'))).toBeGreaterThan(6);
-  await expect(plots.first()).toHaveAttribute('data-scalagram-hop-ms', '500');
+  await expect(plots.first()).toHaveAttribute('data-scalagram-hop-ms', '250');
   await expect(plots.first()).toHaveAttribute('data-scalagram-rate', '100');
   await expect(plots.first()).toHaveAttribute('data-scalagram-min-frequency', '0.5');
   expect(Number(await plots.first().getAttribute('data-scalagram-max-frequency'))).toBeCloseTo(40);
+  await expect(plots.first()).toHaveAttribute('data-scalagram-run-count', '1');
+  await expect(plots.first()).toHaveAttribute('data-scalagram-rejected', '0');
+  await expect(plots.first()).toHaveAttribute('data-scalagram-timestamp-lookup-failures', '0');
+  await expect(plots.first()).toHaveAttribute('data-scalagram-missing-columns', '0');
   await expect(page.locator('[data-scalagram-quality-label]')).toHaveCount(10);
   await expect(page.locator('[data-analysis-sample-rate]')).toHaveCount(10);
 
@@ -93,4 +114,31 @@ test('renders ten progressive scalagrams and cancels obsolete aggregation work',
   await aggregation.press('Home');
   await expect.poll(async () => Number(await plots.first().getAttribute('data-scalagram-columns'))).toBeGreaterThan(0);
   expect(sockets).toHaveLength(1);
+});
+
+test('preserves the view through an initial preparation failure and recovers with valid data', async ({ page }) => {
+  let socket: WebSocketRoute | undefined;
+  await page.routeWebSocket('wss://rf.postoccupancy.com', (route) => {
+    socket = route;
+    route.send(JSON.stringify({
+      type: 'sample_batch', sendTimeUs: 200_000_000,
+      streams: [{ name: 'indoor-sky', param: 'humidity', unit: 'percent', samples: [[0, 100_000_000, 0]] }],
+    }));
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Scalagram', exact: true }).click();
+  const plot = page.locator('canvas[data-scalagram-columns]');
+  await expect(plot).toHaveAttribute('data-scalagram-unavailable', /Insufficient/);
+  socket!.send(JSON.stringify({
+    type: 'sample_batch', sendTimeUs: 112_000_000,
+    streams: [{
+      name: 'indoor-sky', param: 'humidity', unit: 'percent',
+      samples: Array.from({ length: 1_200 }, (_, offset) => {
+        const sequence = offset + 1;
+        return [sequence, 100_000_000 + sequence * 10_000, Math.sin(2 * Math.PI * 5 * sequence / 100)];
+      }),
+    }],
+  }));
+  await expect.poll(async () => Number(await plot.getAttribute('data-scalagram-columns'))).toBeGreaterThan(0);
+  await expect(plot).not.toHaveAttribute('data-scalagram-unavailable', /.+/);
 });

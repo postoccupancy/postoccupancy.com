@@ -4,20 +4,22 @@ import { memo, useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import type { Channel, NodeClock } from '@/lib/signals/router-client';
 import {
-  analyzeCwtAtTimestamps,
+  analyzeCwtAtTimestampsWithDiagnostics,
+  cwtRefreshHorizonUs,
   prepareCwtAnalysis,
   type CwtColumn,
-  type CwtResult,
   type CwtKernelSet,
 } from '@/lib/signals/cwt-analysis';
 import { prepareReconstructedAnalysis } from '@/lib/signals/spectrum-analysis';
 
-export const SCALAGRAM_HOP_US = 500_000;
+export const SCALAGRAM_HOP_US = 250_000;
 const HISTORY_US = 65_000_000;
 const INITIAL_HISTORY_US = 3_000_000;
 const BACKFILL_CHUNK_US = 5_000_000;
 const RASTER_TILE_COLUMNS = 16;
 const POWER_RANGE_DB = 60;
+const CALIBRATION_US = 30_000_000;
+const CALIBRATION_HOP_US = 1_000_000;
 
 export interface ScalagramTimeRun {
   columns: CwtColumn[];
@@ -76,28 +78,47 @@ export function scalagramQualityLabel(column?: CwtColumn) {
   return `run ${column.quality.status} · ${(column.quality.reconstructedFraction * 100).toFixed(1)}% interpolated`;
 }
 
-/** Fixed-history logarithmic mapping: the frozen reference is 0 dB and powers 60 dB below it are black. */
+/** Historical-calibration mapping: the frozen 95th-percentile valid power is 0 dB; 60 dB below is black. */
 export function scalagramPowerLevel(power: number, referencePower: number) {
   if (!(power > 0) || !(referencePower > 0)) return 0;
   return Math.max(0, Math.min(1, (10 * Math.log10(power / referencePower) + POWER_RANGE_DB) / POWER_RANGE_DB));
 }
 
 export function scalagramPowerReference(columns: CwtColumn[]) {
-  let maximum = 0;
+  const powers: number[] = [];
   for (const column of columns) {
     for (let band = 0; band < column.power.length; band++) {
-      if (column.valid[band]) maximum = Math.max(maximum, column.power[band]);
+      if (column.valid[band] && Number.isFinite(column.power[band]) && column.power[band] > 0) powers.push(column.power[band]);
     }
   }
-  return Math.max(maximum, 1e-24);
+  powers.sort((left, right) => left - right);
+  return Math.max(powers[Math.floor((powers.length - 1) * 0.95)] ?? 0, 1e-24);
 }
 
 export function scalagramBandOpacity(valid: boolean, edgeAffected: boolean) {
-  return valid ? 255 : edgeAffected ? 90 : 0;
+  return valid ? 255 : edgeAffected ? 180 : 0;
 }
 
 export function pruneScalagramColumns(columns: CwtColumn[], endTimeUs: number) {
   return columns.filter((column) => column.requestedTimeUs >= endTimeUs - HISTORY_US);
+}
+
+export function scalagramMissingColumnCount(columns: CwtColumn[], hopUs = SCALAGRAM_HOP_US) {
+  if (columns.length < 2) return 0;
+  const expected = Math.floor((columns.at(-1)!.requestedTimeUs - columns[0].requestedTimeUs) / hopUs) + 1;
+  return Math.max(0, expected - columns.length);
+}
+
+export function scalagramColumnRevision(column: CwtColumn) {
+  let valid = 0;
+  let edge = 0;
+  let power = 0;
+  for (let index = 0; index < column.power.length; index++) {
+    valid += column.valid[index];
+    edge += column.edgeAffected[index];
+    power += column.power[index] * (index + 1);
+  }
+  return `${column.analysisTimeUs}:${valid}:${edge}:${power.toExponential(6)}`;
 }
 
 function hslToRgb(hue: number, saturation: number, lightness: number) {
@@ -145,14 +166,21 @@ function buildTileRaster(run: ScalagramTimeRun, height: number, referencePower: 
   return raster;
 }
 
-function successful(results: CwtResult[]) {
-  return results.filter((result): result is CwtColumn => result.status === 'ok');
+function hopTimes(first: number, last: number, hopUs = SCALAGRAM_HOP_US) {
+  if (last < first) return [];
+  return Array.from({ length: Math.floor((last - first) / hopUs) + 1 }, (_, index) => first + index * hopUs);
 }
 
-function hopTimes(first: number, last: number) {
-  if (last < first) return [];
-  return Array.from({ length: Math.floor((last - first) / SCALAGRAM_HOP_US) + 1 }, (_, index) => first + index * SCALAGRAM_HOP_US);
+interface ScalagramDiagnostics {
+  attempted: number;
+  successful: number;
+  rejected: number;
+  timestampLookupFailures: number;
+  reanalyzed: number;
+  runLengths: number[];
 }
+
+const emptyDiagnostics = (): ScalagramDiagnostics => ({ attempted: 0, successful: 0, rejected: 0, timestampLookupFailures: 0, reanalyzed: 0, runLengths: [] });
 
 export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay, windowSeconds, aggregationMs, refreshKey, label, onAnalysisRate }: {
   channel: Channel;
@@ -176,7 +204,9 @@ export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay
   const initialColumnsRef = useRef(0);
   const backfillMsRef = useRef(0);
   const incrementalMsRef = useRef(0);
+  const diagnosticsRef = useRef<ScalagramDiagnostics>(emptyDiagnostics());
   const [revision, setRevision] = useState(0);
+  const [bootstrapRevision, setBootstrapRevision] = useState(0);
   const [unavailable, setUnavailable] = useState('');
   const analysisKey = `${channel.id}/${clock?.generation ?? -1}/${delay}/${aggregationMs}`;
   const inputRef = useRef({ channel, clock, delay, aggregationMs });
@@ -202,8 +232,13 @@ export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay
     initialColumnsRef.current = 0;
     backfillMsRef.current = 0;
     incrementalMsRef.current = 0;
+    diagnosticsRef.current = emptyDiagnostics();
     setUnavailable('');
-    if (!samples.length) { setRevision((value) => value + 1); return; }
+    if (!samples.length) {
+      setUnavailable('Insufficient reconstructed data.');
+      setRevision((value) => value + 1);
+      return;
+    }
 
     const preparationStarted = performance.now();
     const reconstructed = prepareReconstructedAnalysis(samples, input.aggregationMs);
@@ -216,16 +251,26 @@ export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay
     }
     const prepared = preparedResult;
     kernelsRef.current = prepared;
+    diagnosticsRef.current.runLengths = prepared.runs.map((run) => run.observations.length);
     const firstObservation = prepared.runs[0]?.observations[0];
     if (!firstObservation) return;
     const firstHop = Math.ceil(Math.max(firstObservation.t, end - HISTORY_US) / SCALAGRAM_HOP_US) * SCALAGRAM_HOP_US;
     const finalHop = Math.floor(end / SCALAGRAM_HOP_US) * SCALAGRAM_HOP_US;
     const recentFirstHop = Math.max(firstHop, Math.ceil((finalHop - INITIAL_HISTORY_US) / SCALAGRAM_HOP_US) * SCALAGRAM_HOP_US);
-    const recent = successful(analyzeCwtAtTimestamps(prepared, hopTimes(recentFirstHop, finalHop)));
+    const latestObservation = prepared.runs.at(-1)?.observations.at(-1);
+    const calibrationEnd = Math.min(finalHop, Math.floor((latestObservation?.t ?? finalHop) / CALIBRATION_HOP_US) * CALIBRATION_HOP_US);
+    const calibrationFirst = Math.ceil(Math.max(firstObservation.t, calibrationEnd - CALIBRATION_US) / CALIBRATION_HOP_US) * CALIBRATION_HOP_US;
+    const calibration = analyzeCwtAtTimestampsWithDiagnostics(prepared, hopTimes(calibrationFirst, calibrationEnd, CALIBRATION_HOP_US));
+    referencePowerRef.current = scalagramPowerReference(calibration.columns);
+    const recentResult = analyzeCwtAtTimestampsWithDiagnostics(prepared, hopTimes(recentFirstHop, finalHop));
+    const recent = recentResult.columns;
+    diagnosticsRef.current.attempted += recentResult.attempted;
+    diagnosticsRef.current.successful += recentResult.successful;
+    diagnosticsRef.current.rejected += recentResult.rejected;
+    diagnosticsRef.current.timestampLookupFailures += recentResult.rejectionReasons['timestamp-outside-runs'] ?? 0;
     historyRef.current = recent;
     initialColumnsRef.current = recent.length;
     lastHopRef.current = finalHop;
-    referencePowerRef.current = scalagramPowerReference(recent);
     initialDisplayMsRef.current = performance.now() - started;
     onAnalysisRate?.(channel.id, aggregationMs, prepared.effectiveSampleRate);
     setRevision((value) => value + 1);
@@ -238,8 +283,12 @@ export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay
         return;
       }
       const chunkFinal = Math.min(recentFirstHop - SCALAGRAM_HOP_US, cursor + BACKFILL_CHUNK_US - SCALAGRAM_HOP_US);
-      const columns = successful(analyzeCwtAtTimestamps(prepared, hopTimes(cursor, chunkFinal)));
-      historyRef.current = mergeScalagramColumns(historyRef.current, columns);
+      const result = analyzeCwtAtTimestampsWithDiagnostics(prepared, hopTimes(cursor, chunkFinal));
+      diagnosticsRef.current.attempted += result.attempted;
+      diagnosticsRef.current.successful += result.successful;
+      diagnosticsRef.current.rejected += result.rejected;
+      diagnosticsRef.current.timestampLookupFailures += result.rejectionReasons['timestamp-outside-runs'] ?? 0;
+      historyRef.current = mergeScalagramColumns(historyRef.current, result.columns);
       cursor = chunkFinal + SCALAGRAM_HOP_US;
       setRevision((value) => value + 1);
       timer = window.setTimeout(processOlderChunk, 0);
@@ -247,11 +296,15 @@ export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay
     if (cursor < recentFirstHop) timer = window.setTimeout(processOlderChunk, 0);
     else backfillMsRef.current = performance.now() - started;
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [aggregationMs, analysisKey, channel.id, onAnalysisRate]);
+  }, [aggregationMs, analysisKey, bootstrapRevision, channel.id, onAnalysisRate]);
 
   useEffect(() => {
     void refreshKey;
-    if (!clock || analysisKeyRef.current !== analysisKey || lastHopRef.current === null) return;
+    if (!clock || analysisKeyRef.current !== analysisKey) return;
+    if (lastHopRef.current === null) {
+      setBootstrapRevision((value) => value + 1);
+      return;
+    }
     const end = clock.timeUs + (performance.now() - clock.atMs) * 1000 - delay * 1e6;
     const firstHop = lastHopRef.current + SCALAGRAM_HOP_US;
     const finalHop = Math.floor(end / SCALAGRAM_HOP_US) * SCALAGRAM_HOP_US;
@@ -262,12 +315,22 @@ export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay
     const reconstructed = prepareReconstructedAnalysis(samples, aggregationMs);
     const prepared = reconstructed ? prepareCwtAnalysis(reconstructed, {}, kernelsRef.current) : null;
     if (!prepared || 'status' in prepared) {
-      if (prepared && 'status' in prepared) setUnavailable(prepared.reason);
+      setUnavailable(prepared && 'status' in prepared ? prepared.reason : 'Insufficient reconstructed data.');
+      setRevision((value) => value + 1);
       return;
     }
     kernelsRef.current = prepared;
-    const columns = successful(analyzeCwtAtTimestamps(prepared, hopTimes(firstHop, finalHop)));
-    historyRef.current = pruneScalagramColumns(mergeScalagramColumns(historyRef.current, columns), end);
+    diagnosticsRef.current.runLengths = prepared.runs.map((run) => run.observations.length);
+    const maturityFirst = Math.ceil((finalHop - cwtRefreshHorizonUs(prepared)) / SCALAGRAM_HOP_US) * SCALAGRAM_HOP_US;
+    const analysisFirst = Math.min(firstHop, maturityFirst);
+    const times = hopTimes(analysisFirst, finalHop);
+    const result = analyzeCwtAtTimestampsWithDiagnostics(prepared, times);
+    diagnosticsRef.current.attempted += result.attempted;
+    diagnosticsRef.current.successful += result.successful;
+    diagnosticsRef.current.rejected += result.rejected;
+    diagnosticsRef.current.timestampLookupFailures += result.rejectionReasons['timestamp-outside-runs'] ?? 0;
+    diagnosticsRef.current.reanalyzed += times.filter((timeUs) => timeUs <= lastHopRef.current!).length;
+    historyRef.current = pruneScalagramColumns(mergeScalagramColumns(historyRef.current, result.columns), end);
     lastHopRef.current = finalHop;
     incrementalMsRef.current = performance.now() - started;
     setUnavailable('');
@@ -291,7 +354,7 @@ export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay
       rasterHeight = height;
       const activeKeys = new Set<string>();
       rasters = tiles.map((run) => {
-        const key = `${run.columns[0].requestedTimeUs}/${run.columns.at(-1)!.requestedTimeUs}/${run.columns.length}/${height}/${referencePowerRef.current}`;
+        const key = `${run.columns[0].requestedTimeUs}/${run.columns.at(-1)!.requestedTimeUs}/${run.columns.length}/${run.columns.map(scalagramColumnRevision).join(',')}/${height}/${referencePowerRef.current}`;
         activeKeys.add(key);
         let raster = rasterCacheRef.current.get(key);
         if (!raster) {
@@ -341,7 +404,7 @@ export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay
 
   const latest = historyRef.current.at(-1);
   const state = latest
-    ? `${label}. Scalagram. ${historyRef.current.length} timestamped columns. ${latest.frequenciesHz[0].toFixed(2)} to ${latest.frequenciesHz.at(-1)!.toFixed(2)} Hz.`
+    ? `${label}. Scalagram. ${historyRef.current.length} timestamped columns. ${latest.frequenciesHz[0].toFixed(2)} to ${latest.frequenciesHz.at(-1)!.toFixed(2)} Hz.${unavailable ? ` Analysis stale: ${unavailable}` : ''}`
     : `${label}. Scalagram. ${unavailable || 'Insufficient reconstructed data'}`;
   return <Box sx={{ position: 'relative', width: '100%', height: 170 }}>
     <Box component="canvas" ref={canvasRef} role="img" aria-label={state}
@@ -358,10 +421,18 @@ export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay
       data-scalagram-backfill-ms={backfillMsRef.current.toFixed(1)}
       data-scalagram-preparation-ms={preparationMsRef.current.toFixed(1)}
       data-scalagram-incremental-ms={incrementalMsRef.current.toFixed(1)}
+      data-scalagram-run-count={diagnosticsRef.current.runLengths.length}
+      data-scalagram-run-lengths={diagnosticsRef.current.runLengths.join(',')}
+      data-scalagram-attempted={diagnosticsRef.current.attempted}
+      data-scalagram-successful={diagnosticsRef.current.successful}
+      data-scalagram-rejected={diagnosticsRef.current.rejected}
+      data-scalagram-timestamp-lookup-failures={diagnosticsRef.current.timestampLookupFailures}
+      data-scalagram-missing-columns={scalagramMissingColumnCount(historyRef.current)}
+      data-scalagram-reanalyzed={diagnosticsRef.current.reanalyzed}
       data-scalagram-analysis-key={analysisKeyRef.current} data-scalagram-unavailable={unavailable || undefined}
       sx={{ display: 'block', width: '100%', height: 170, bgcolor: '#071017' }} />
     <Box component="span" data-scalagram-quality-label="true" sx={{ position: 'absolute', top: 4, right: 5, px: 0.5, py: 0.25, color: '#d8e2e8', fontFamily: 'monospace', fontSize: 10, lineHeight: 1.2, pointerEvents: 'none' }}>
-      {scalagramQualityLabel(latest)}
+      {scalagramQualityLabel(latest)}{unavailable && latest ? ' · analysis stale' : ''}
     </Box>
   </Box>;
 });

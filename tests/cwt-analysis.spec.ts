@@ -2,6 +2,8 @@ import { expect, test } from '@playwright/test';
 import {
   analyzeCwtAtTimestamp,
   analyzeCwtAtTimestamps,
+  analyzeCwtAtTimestampsWithDiagnostics,
+  cwtRefreshHorizonUs,
   prepareCwtAnalysis,
   type CwtColumn,
   type CwtConfiguration,
@@ -166,4 +168,36 @@ test('reuses compatible Morlet kernels across incremental preparations', () => {
   if ('status' in second) throw new Error(second.reason);
   expect(second.kernels).toBe(first.kernels);
   expect(second.frequenciesHz).toBe(first.frequenciesHz);
+});
+
+test('finds actual nearby observations under realistic cumulative timestamp drift', () => {
+  const observations = Array.from({ length: 1_000 }, (_, index) => ({ key: index, t: index * 10_020, v: Math.sin(TAU * index / 100) }));
+  const input = {
+    runs: [{ observations, quality: { originalSampleCount: observations.length, interpolatedSampleCount: 0, reconstructedFraction: 0, largestInterpolatedGapUs: 0, status: 'fresh' as const } }],
+    effectiveSampleRate: 1e6 / 10_020,
+    expectedUs: 10_020,
+    aggregationMs: 0,
+  };
+  const prepared = prepareCwtAnalysis(input);
+  if ('status' in prepared) throw new Error(prepared.reason);
+  const result = analyzeCwtAtTimestamp(prepared, 5_000_000);
+  expect(result.status).toBe('ok');
+  if (result.status === 'ok') expect(Math.abs(result.analysisTimeUs - 5_000_000)).toBeLessThan(100);
+  const diagnostics = analyzeCwtAtTimestampsWithDiagnostics(prepared, [5_000_000, 20_000_000]);
+  expect(diagnostics).toMatchObject({ attempted: 2, successful: 1, rejected: 1, rejectionReasons: { 'timestamp-outside-runs': 1 } });
+});
+
+test('recent edge coefficients mature when their derived support becomes available', () => {
+  const source = signal(100, 20, (time) => Math.sin(TAU * time));
+  const early = prepare(source.filter((sample) => sample.t <= 11e6));
+  const mature = prepare(source.filter((sample) => sample.t <= 15e6));
+  const earlyColumn = column(early, 10);
+  const matureColumn = column(mature, 10);
+  const band = nearest(earlyColumn.frequenciesHz, 1);
+  expect(cwtRefreshHorizonUs(early)).toBeGreaterThan(3_800_000);
+  expect(earlyColumn.edgeAffected[band]).toBe(1);
+  expect(earlyColumn.valid[band]).toBe(0);
+  expect(matureColumn.edgeAffected[band]).toBe(0);
+  expect(matureColumn.valid[band]).toBe(1);
+  expect(matureColumn.power[band]).not.toBe(earlyColumn.power[band]);
 });
