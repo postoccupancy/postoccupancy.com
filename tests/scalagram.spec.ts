@@ -5,15 +5,20 @@ import {
   scalagramBandOpacity,
   scalagramColumnRevision,
   scalagramFrequencyLabels,
+  scalagramHasContinuousSupport,
   scalagramPowerLevel,
   scalagramPowerReference,
   scalagramPresentationEdgeEnd,
   scalagramQualityLabel,
   scalagramRasterTiles,
   scalagramTimeRuns,
+  scalagramTimeline,
   SCALAGRAM_HOP_US,
 } from '../src/components/signals/scalagram-plot';
 import type { CwtColumn } from '../src/lib/signals/cwt-analysis';
+import { analyzeCwtAtTimestampsWithDiagnostics, prepareCwtAnalysis } from '../src/lib/signals/cwt-analysis';
+import { SampleRing } from '../src/lib/signals/sample-ring';
+import { prepareReconstructedAnalysis } from '../src/lib/signals/spectrum-analysis';
 
 function cwtColumn(timeUs: number, options: { valid?: boolean; quality?: 'fresh' | 'reconstructed' } = {}): CwtColumn {
   const valid = options.valid ?? true;
@@ -83,6 +88,58 @@ test('right-edge extension is bounded and never covers stale or missing analysis
   expect(scalagramPresentationEdgeEnd(1_000_000, 250_000, 1_200_000, true)).toBe(1_125_000);
 });
 
+test('six-second delayed live timeline uses acquired support and recovers from an empty growing ring', () => {
+  const ring = new SampleRing();
+  const origin = 100_000_000;
+  let sequence = 0;
+  let firstVisibleStep = -1;
+  let priorLastColumn = 0;
+  for (let second = 0; second <= 14; second++) {
+    if (second > 0) {
+      for (let sample = 0; sample < 100; sample++) {
+        const jitterUs = sample % 2 ? 35 : -35;
+        const t = origin + (second - 1) * 1_000_000 + sample * 10_000 + jitterUs;
+        ring.push({ seq: sequence++, t, v: Math.sin(2 * Math.PI * 4 * sequence / 100) });
+      }
+    }
+    const acquisitionEndUs = ring.latest()?.t ?? 0;
+    const timeline = scalagramTimeline(origin + second * 1_000_000, 6, acquisitionEndUs);
+    expect(timeline.analysisSupportEndUs).toBe(acquisitionEndUs);
+    if (!acquisitionEndUs || timeline.presentationEndUs < origin) continue;
+    const samples: Array<{ seq: number; t: number; v: number }> = [];
+    ring.visitRange(acquisitionEndUs - 70_000_000, acquisitionEndUs, (value) => samples.push(value));
+    const reconstructed = prepareReconstructedAnalysis(samples, 0);
+    const preparedResult = reconstructed && prepareCwtAnalysis(reconstructed);
+    expect(preparedResult).toBeTruthy();
+    expect(preparedResult && !('status' in preparedResult)).toBe(true);
+    if (!preparedResult || 'status' in preparedResult) continue;
+    expect(scalagramHasContinuousSupport(preparedResult.runs, timeline.presentationEndUs)).toBe(true);
+    const requested = Math.floor(timeline.presentationEndUs / SCALAGRAM_HOP_US) * SCALAGRAM_HOP_US;
+    const result = analyzeCwtAtTimestampsWithDiagnostics(preparedResult, [requested]);
+    expect(result.successful).toBe(1);
+    if (firstVisibleStep < 0) firstVisibleStep = second;
+    expect(requested).toBeGreaterThan(priorLastColumn);
+    priorLastColumn = requested;
+  }
+  expect(firstVisibleStep).toBe(6);
+});
+
+test('continuous-support detection preserves a real acquisition gap and edge extension stays sub-hop', () => {
+  const runs = [
+    { observations: [{ t: 1_000_000 }, { t: 2_000_000 }] },
+    { observations: [{ t: 2_200_000 }, { t: 3_000_000 }] },
+  ];
+  expect(scalagramHasContinuousSupport(runs, 2_100_000)).toBe(false);
+  expect(scalagramHasContinuousSupport(runs, 2_500_000)).toBe(true);
+  expect(scalagramHasContinuousSupport(runs, 2_500_000, 2_000_000)).toBe(false);
+  for (const elapsed of [10_000, 80_000, 200_000, 299_000]) {
+    expect(scalagramPresentationEdgeEnd(2_500_000, 250_000, 2_500_000 + elapsed, false))
+      .toBe(Math.max(2_625_000, 2_500_000 + elapsed));
+  }
+  expect(scalagramPresentationEdgeEnd(2_500_000, 250_000, 2_801_000, false)).toBe(2_625_000);
+  expect(scalagramPresentationEdgeEnd(2_500_000, 250_000, 2_600_000, true)).toBe(2_625_000);
+});
+
 test('renders ten progressive scalagrams and cancels obsolete aggregation work', async ({ page }) => {
   const sockets: WebSocketRoute[] = [];
   await page.routeWebSocket('wss://rf.postoccupancy.com', (socket) => {
@@ -135,7 +192,7 @@ test('preserves the view through an initial preparation failure and recovers wit
   await page.goto('/');
   await page.getByRole('button', { name: 'Scalagram', exact: true }).click();
   const plot = page.locator('canvas[data-scalagram-columns]');
-  await expect(plot).toHaveAttribute('data-scalagram-unavailable', /Waiting for presentation buffer/);
+  await expect(plot).toHaveAttribute('data-scalagram-unavailable', /Insufficient reconstructed data/);
   socket!.send(JSON.stringify({
     type: 'sample_batch', sendTimeUs: 112_000_000,
     streams: [{

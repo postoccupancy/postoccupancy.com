@@ -133,6 +133,23 @@ export function scalagramPresentationEdgeEnd(
   return Math.max(cellEnd, Math.min(presentationEndUs, lastColumnTimeUs + hopUs + toleranceUs));
 }
 
+export function scalagramTimeline(nodeClockTimeUs: number, delaySeconds: number, acquisitionEndUs: number) {
+  return {
+    nodeClockTimeUs,
+    presentationEndUs: nodeClockTimeUs - delaySeconds * 1e6,
+    acquisitionEndUs,
+    analysisSupportEndUs: acquisitionEndUs,
+  };
+}
+
+export function scalagramHasContinuousSupport(runs: Array<{ observations: Array<{ t: number }> }>, presentationEndUs: number, lastColumnTimeUs = presentationEndUs) {
+  return runs.some((run) => {
+    const first = run.observations[0]?.t;
+    const last = run.observations.at(-1)?.t;
+    return first !== undefined && last !== undefined && first <= lastColumnTimeUs && last >= presentationEndUs;
+  });
+}
+
 function hslToRgb(hue: number, saturation: number, lightness: number) {
   const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
   const section = hue / 60;
@@ -194,15 +211,26 @@ interface ScalagramDiagnostics {
   rawFirstTimeUs: number;
   rawLastTimeUs: number;
   presentationEndUs: number;
+  nodeClockTimeUs: number;
+  acquisitionEndUs: number;
+  samplesBeforePresentation: number;
+  samplesAfterPresentation: number;
+  continuousAtPresentation: boolean;
+  requestedFirstTimeUs: number;
+  requestedLastTimeUs: number;
 }
 
-const emptyDiagnostics = (): ScalagramDiagnostics => ({ attempted: 0, successful: 0, rejected: 0, timestampLookupFailures: 0, reanalyzed: 0, runLengths: [], rawSampleCount: 0, rawFirstTimeUs: 0, rawLastTimeUs: 0, presentationEndUs: 0 });
+const emptyDiagnostics = (): ScalagramDiagnostics => ({ attempted: 0, successful: 0, rejected: 0, timestampLookupFailures: 0, reanalyzed: 0, runLengths: [], rawSampleCount: 0, rawFirstTimeUs: 0, rawLastTimeUs: 0, presentationEndUs: 0, nodeClockTimeUs: 0, acquisitionEndUs: 0, samplesBeforePresentation: 0, samplesAfterPresentation: 0, continuousAtPresentation: false, requestedFirstTimeUs: 0, requestedLastTimeUs: 0 });
 
-function recordRawWindow(diagnostics: ScalagramDiagnostics, samples: Array<{ t: number }>, end: number) {
+function recordRawWindow(diagnostics: ScalagramDiagnostics, samples: Array<{ t: number }>, nodeClockTimeUs: number, presentationEndUs: number, acquisitionEndUs: number) {
   diagnostics.rawSampleCount = samples.length;
   diagnostics.rawFirstTimeUs = samples[0]?.t ?? 0;
   diagnostics.rawLastTimeUs = samples.at(-1)?.t ?? 0;
-  diagnostics.presentationEndUs = end;
+  diagnostics.presentationEndUs = presentationEndUs;
+  diagnostics.nodeClockTimeUs = nodeClockTimeUs;
+  diagnostics.acquisitionEndUs = acquisitionEndUs;
+  diagnostics.samplesBeforePresentation = samples.filter((sample) => sample.t <= presentationEndUs).length;
+  diagnostics.samplesAfterPresentation = samples.length - diagnostics.samplesBeforePresentation;
 }
 
 export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay, windowSeconds, aggregationMs, refreshKey, label, onAnalysisRate }: {
@@ -241,9 +269,11 @@ export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay
     let cancelled = false;
     let timer = 0;
     const started = performance.now();
-    const end = input.clock.timeUs + (performance.now() - input.clock.atMs) * 1000 - input.delay * 1e6;
+    const acquisitionEndUs = input.channel.ring.latest()?.t ?? 0;
+    const timeline = scalagramTimeline(input.clock.timeUs + (performance.now() - input.clock.atMs) * 1000, input.delay, acquisitionEndUs);
+    const { nodeClockTimeUs, presentationEndUs: end } = timeline;
     const samples: Array<{ seq: number; t: number; v: number }> = [];
-    input.channel.ring.visitRange(end - 70_000_000, end, (sample) => samples.push(sample));
+    input.channel.ring.visitRange(acquisitionEndUs - 70_000_000, acquisitionEndUs, (sample) => samples.push(sample));
     analysisKeyRef.current = analysisKey;
     historyRef.current = [];
     lastHopRef.current = null;
@@ -256,10 +286,10 @@ export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay
     backfillMsRef.current = 0;
     incrementalMsRef.current = 0;
     diagnosticsRef.current = emptyDiagnostics();
-    recordRawWindow(diagnosticsRef.current, samples, end);
+    recordRawWindow(diagnosticsRef.current, samples, nodeClockTimeUs, end, acquisitionEndUs);
     setUnavailable('');
     if (!samples.length) {
-      setUnavailable(input.channel.ring.latest()?.t && input.channel.ring.latest()!.t > end
+      setUnavailable(acquisitionEndUs > end
         ? 'Waiting for presentation buffer.'
         : 'Insufficient reconstructed data.');
       setRevision((value) => value + 1);
@@ -282,6 +312,13 @@ export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay
     if (!firstObservation) return;
     const firstHop = Math.ceil(Math.max(firstObservation.t, end - HISTORY_US) / SCALAGRAM_HOP_US) * SCALAGRAM_HOP_US;
     const finalHop = Math.floor(end / SCALAGRAM_HOP_US) * SCALAGRAM_HOP_US;
+    if (finalHop < firstHop) {
+      lastHopRef.current = firstHop - SCALAGRAM_HOP_US;
+      onAnalysisRate?.(channel.id, aggregationMs, prepared.effectiveSampleRate);
+      setUnavailable('Waiting for presentation buffer.');
+      setRevision((value) => value + 1);
+      return;
+    }
     const recentFirstHop = Math.max(firstHop, Math.ceil((finalHop - INITIAL_HISTORY_US) / SCALAGRAM_HOP_US) * SCALAGRAM_HOP_US);
     const latestObservation = prepared.runs.at(-1)?.observations.at(-1);
     const calibrationEnd = Math.min(finalHop, Math.floor((latestObservation?.t ?? finalHop) / CALIBRATION_HOP_US) * CALIBRATION_HOP_US);
@@ -289,12 +326,16 @@ export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay
     const calibration = analyzeCwtAtTimestampsWithDiagnostics(prepared, hopTimes(calibrationFirst, calibrationEnd, CALIBRATION_HOP_US));
     referencePowerRef.current = scalagramPowerReference(calibration.columns);
     const recentResult = analyzeCwtAtTimestampsWithDiagnostics(prepared, hopTimes(recentFirstHop, finalHop));
+    diagnosticsRef.current.requestedFirstTimeUs = recentFirstHop;
+    diagnosticsRef.current.requestedLastTimeUs = finalHop;
     const recent = recentResult.columns;
     diagnosticsRef.current.attempted += recentResult.attempted;
     diagnosticsRef.current.successful += recentResult.successful;
     diagnosticsRef.current.rejected += recentResult.rejected;
     diagnosticsRef.current.timestampLookupFailures += recentResult.rejectionReasons['timestamp-outside-runs'] ?? 0;
     historyRef.current = recent;
+    diagnosticsRef.current.continuousAtPresentation = Boolean(recent.at(-1)
+      && scalagramHasContinuousSupport(prepared.runs, end, recent.at(-1)!.requestedTimeUs));
     if (!recent.length) setUnavailable('Waiting for presentation buffer.');
     initialColumnsRef.current = recent.length;
     lastHopRef.current = finalHop;
@@ -332,14 +373,16 @@ export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay
       setBootstrapRevision((value) => value + 1);
       return;
     }
-    const end = clock.timeUs + (performance.now() - clock.atMs) * 1000 - delay * 1e6;
+    const acquisitionEndUs = channel.ring.latest()?.t ?? 0;
+    const timeline = scalagramTimeline(clock.timeUs + (performance.now() - clock.atMs) * 1000, delay, acquisitionEndUs);
+    const { nodeClockTimeUs, presentationEndUs: end } = timeline;
     const firstHop = lastHopRef.current + SCALAGRAM_HOP_US;
     const finalHop = Math.floor(end / SCALAGRAM_HOP_US) * SCALAGRAM_HOP_US;
     if (firstHop > finalHop) return;
     const started = performance.now();
     const samples: Array<{ seq: number; t: number; v: number }> = [];
-    channel.ring.visitRange(end - 70_000_000, end, (sample) => samples.push(sample));
-    recordRawWindow(diagnosticsRef.current, samples, end);
+    channel.ring.visitRange(acquisitionEndUs - 70_000_000, acquisitionEndUs, (sample) => samples.push(sample));
+    recordRawWindow(diagnosticsRef.current, samples, nodeClockTimeUs, end, acquisitionEndUs);
     const reconstructed = prepareReconstructedAnalysis(samples, aggregationMs);
     const prepared = reconstructed ? prepareCwtAnalysis(reconstructed, {}, kernelsRef.current) : null;
     if (!prepared || 'status' in prepared) {
@@ -352,6 +395,8 @@ export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay
     const maturityFirst = Math.ceil((finalHop - cwtRefreshHorizonUs(prepared)) / SCALAGRAM_HOP_US) * SCALAGRAM_HOP_US;
     const analysisFirst = Math.min(firstHop, maturityFirst);
     const times = hopTimes(analysisFirst, finalHop);
+    diagnosticsRef.current.requestedFirstTimeUs = firstHop;
+    diagnosticsRef.current.requestedLastTimeUs = finalHop;
     const result = analyzeCwtAtTimestampsWithDiagnostics(prepared, times);
     diagnosticsRef.current.attempted += result.attempted;
     diagnosticsRef.current.successful += result.successful;
@@ -359,6 +404,9 @@ export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay
     diagnosticsRef.current.timestampLookupFailures += result.rejectionReasons['timestamp-outside-runs'] ?? 0;
     diagnosticsRef.current.reanalyzed += times.filter((timeUs) => timeUs <= lastHopRef.current!).length;
     historyRef.current = pruneScalagramColumns(mergeScalagramColumns(historyRef.current, result.columns), end);
+    const latestColumn = historyRef.current.at(-1);
+    diagnosticsRef.current.continuousAtPresentation = Boolean(latestColumn
+      && scalagramHasContinuousSupport(prepared.runs, end, latestColumn.requestedTimeUs));
     lastHopRef.current = finalHop;
     incrementalMsRef.current = performance.now() - started;
     setUnavailable(historyRef.current.length ? '' : 'Waiting for presentation buffer.');
@@ -415,7 +463,7 @@ export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay
           const left = (run.startTimeUs - start) / windowUs * width;
           const right = (run.endTimeUs - start) / windowUs * width;
           context.drawImage(raster, left, 0, right - left, height);
-          if (run === tiles.at(-1) && !unavailable) {
+          if (run === tiles.at(-1) && !unavailable && diagnosticsRef.current.continuousAtPresentation) {
             const lastColumn = run.columns.at(-1)!;
             const extendedEnd = scalagramPresentationEdgeEnd(lastColumn.requestedTimeUs, SCALAGRAM_HOP_US, end, false);
             if (extendedEnd > run.endTimeUs) {
@@ -469,6 +517,14 @@ export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay
       data-scalagram-raw-first-time={diagnosticsRef.current.rawFirstTimeUs || undefined}
       data-scalagram-raw-last-time={diagnosticsRef.current.rawLastTimeUs || undefined}
       data-scalagram-presentation-end={diagnosticsRef.current.presentationEndUs || undefined}
+      data-scalagram-node-clock-time={diagnosticsRef.current.nodeClockTimeUs || undefined}
+      data-scalagram-acquisition-end={diagnosticsRef.current.acquisitionEndUs || undefined}
+      data-scalagram-analysis-support-end={diagnosticsRef.current.acquisitionEndUs || undefined}
+      data-scalagram-samples-before-presentation={diagnosticsRef.current.samplesBeforePresentation}
+      data-scalagram-samples-after-presentation={diagnosticsRef.current.samplesAfterPresentation}
+      data-scalagram-continuous-at-presentation={diagnosticsRef.current.continuousAtPresentation}
+      data-scalagram-requested-first-time={diagnosticsRef.current.requestedFirstTimeUs || undefined}
+      data-scalagram-requested-last-time={diagnosticsRef.current.requestedLastTimeUs || undefined}
       data-scalagram-analysis-key={analysisKeyRef.current} data-scalagram-unavailable={unavailable || undefined}
       sx={{ display: 'block', width: '100%', height: 170, bgcolor: '#071017' }} />
     <Box component="span" data-scalagram-quality-label="true" sx={{ position: 'absolute', top: 4, right: 5, px: 0.5, py: 0.25, color: '#d8e2e8', fontFamily: 'monospace', fontSize: 10, lineHeight: 1.2, pointerEvents: 'none' }}>
