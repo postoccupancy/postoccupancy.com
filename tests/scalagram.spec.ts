@@ -97,8 +97,11 @@ test('historical calibration is deterministic and column maturation invalidates 
 
 test('right-edge extension is bounded and never covers stale or missing analysis', () => {
   expect(scalagramPresentationEdgeEnd(1_000_000, 250_000, 1_200_000, false)).toBe(1_200_000);
-  expect(scalagramPresentationEdgeEnd(1_000_000, 250_000, 1_400_000, false)).toBe(1_125_000);
+  expect(scalagramPresentationEdgeEnd(1_000_000, 250_000, 1_400_000, false)).toBe(1_300_000);
   expect(scalagramPresentationEdgeEnd(1_000_000, 250_000, 1_200_000, true)).toBe(1_125_000);
+  const advancing = [1_100_000, 1_200_000, 1_299_000, 1_301_000, 1_500_000]
+    .map((presentationEndUs) => scalagramPresentationEdgeEnd(1_000_000, 250_000, presentationEndUs, false));
+  expect(advancing).toEqual([1_125_000, 1_200_000, 1_299_000, 1_300_000, 1_300_000]);
 });
 
 test('six-second delayed live timeline uses acquired support and recovers from an empty growing ring', () => {
@@ -149,7 +152,7 @@ test('continuous-support detection preserves a real acquisition gap and edge ext
     expect(scalagramPresentationEdgeEnd(2_500_000, 250_000, 2_500_000 + elapsed, false))
       .toBe(Math.max(2_625_000, 2_500_000 + elapsed));
   }
-  expect(scalagramPresentationEdgeEnd(2_500_000, 250_000, 2_801_000, false)).toBe(2_625_000);
+  expect(scalagramPresentationEdgeEnd(2_500_000, 250_000, 2_801_000, false)).toBe(2_800_000);
   expect(scalagramPresentationEdgeEnd(2_500_000, 250_000, 2_600_000, true)).toBe(2_625_000);
 });
 

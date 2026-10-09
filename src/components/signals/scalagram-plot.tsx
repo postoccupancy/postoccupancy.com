@@ -148,7 +148,7 @@ export function scalagramPresentationEdgeEnd(
   toleranceUs = 50_000,
 ) {
   const cellEnd = lastColumnTimeUs + hopUs / 2;
-  if (unavailable || presentationEndUs - lastColumnTimeUs > hopUs + toleranceUs) return cellEnd;
+  if (unavailable) return cellEnd;
   return Math.max(cellEnd, Math.min(presentationEndUs, lastColumnTimeUs + hopUs + toleranceUs));
 }
 
