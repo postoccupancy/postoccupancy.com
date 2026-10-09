@@ -27,6 +27,12 @@ export interface ScalagramTimeRun {
   endTimeUs: number;
 }
 
+export interface ScalagramRasterTile extends ScalagramTimeRun {
+  rasterColumns: CwtColumn[];
+  sourceX: number;
+  sourceWidth: number;
+}
+
 export function mergeScalagramColumns(existing: CwtColumn[], incoming: CwtColumn[]) {
   const columns = new Map(existing.map((column) => [column.requestedTimeUs, column]));
   for (const column of incoming) columns.set(column.requestedTimeUs, column);
@@ -48,20 +54,33 @@ export function scalagramTimeRuns(columns: CwtColumn[], hopUs = SCALAGRAM_HOP_US
 }
 
 export function scalagramRasterTiles(columns: CwtColumn[], hopUs = SCALAGRAM_HOP_US) {
-  const tiles: CwtColumn[][] = [];
+  const groups: CwtColumn[][] = [];
   for (const column of columns) {
-    const tile = tiles.at(-1);
+    const tile = groups.at(-1);
     const previous = tile?.at(-1);
     const bucket = Math.floor(column.requestedTimeUs / (hopUs * RASTER_TILE_COLUMNS));
     const previousBucket = previous ? Math.floor(previous.requestedTimeUs / (hopUs * RASTER_TILE_COLUMNS)) : -1;
-    if (!tile || !previous || column.requestedTimeUs - previous.requestedTimeUs > hopUs * 1.5 || bucket !== previousBucket) tiles.push([column]);
+    if (!tile || !previous || column.requestedTimeUs - previous.requestedTimeUs > hopUs * 1.5 || bucket !== previousBucket) groups.push([column]);
     else tile.push(column);
   }
-  return tiles.map((columns) => ({
-    columns,
-    startTimeUs: columns[0].requestedTimeUs - hopUs / 2,
-    endTimeUs: columns.at(-1)!.requestedTimeUs + hopUs / 2,
-  }));
+  return groups.map((tileColumns, index): ScalagramRasterTile => {
+    const previous = groups[index - 1]?.at(-1);
+    const next = groups[index + 1]?.[0];
+    const hasPreviousGuard = Boolean(previous && tileColumns[0].requestedTimeUs - previous.requestedTimeUs <= hopUs * 1.5);
+    const hasNextGuard = Boolean(next && next.requestedTimeUs - tileColumns.at(-1)!.requestedTimeUs <= hopUs * 1.5);
+    return {
+      columns: tileColumns,
+      rasterColumns: [
+        ...(hasPreviousGuard ? [previous!] : []),
+        ...tileColumns,
+        ...(hasNextGuard ? [next!] : []),
+      ],
+      sourceX: hasPreviousGuard ? 1 : 0,
+      sourceWidth: tileColumns.length,
+      startTimeUs: tileColumns[0].requestedTimeUs - hopUs / 2,
+      endTimeUs: tileColumns.at(-1)!.requestedTimeUs + hopUs / 2,
+    };
+  });
 }
 
 export function visibleScalagramRuns(runs: ScalagramTimeRun[], startTimeUs: number, endTimeUs: number) {
@@ -164,14 +183,14 @@ function hslToRgb(hue: number, saturation: number, lightness: number) {
   return [red + match, green + match, blue + match].map((value) => Math.round(value * 255));
 }
 
-function buildTileRaster(run: ScalagramTimeRun, height: number, referencePower: number) {
+function buildTileRaster(run: ScalagramRasterTile, height: number, referencePower: number) {
   const raster = document.createElement('canvas');
-  raster.width = run.columns.length;
+  raster.width = run.rasterColumns.length;
   raster.height = height;
   const context = raster.getContext('2d')!;
   const image = context.createImageData(raster.width, height);
-  for (let x = 0; x < run.columns.length; x++) {
-    const column = run.columns[x];
+  for (let x = 0; x < run.rasterColumns.length; x++) {
+    const column = run.rasterColumns[x];
     const maximumBand = column.power.length - 1;
     for (let y = 0; y < height; y++) {
       const bandPosition = (1 - y / Math.max(1, height - 1)) * maximumBand;
@@ -424,13 +443,13 @@ export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay
     const tiles = scalagramRasterTiles(columns);
     const labels = columns[0] ? scalagramFrequencyLabels(columns[0].frequenciesHz) : null;
     let rasterHeight = 0;
-    let rasters: Array<{ run: ScalagramTimeRun; canvas: HTMLCanvasElement }> = [];
+    let rasters: Array<{ run: ScalagramRasterTile; canvas: HTMLCanvasElement }> = [];
     const ensureRasters = (height: number) => {
       if (height === rasterHeight) return;
       rasterHeight = height;
       const activeKeys = new Set<string>();
       rasters = tiles.map((run) => {
-        const key = `${run.columns[0].requestedTimeUs}/${run.columns.at(-1)!.requestedTimeUs}/${run.columns.length}/${run.columns.map(scalagramColumnRevision).join(',')}/${height}/${referencePowerRef.current}`;
+        const key = `${run.columns[0].requestedTimeUs}/${run.columns.at(-1)!.requestedTimeUs}/${run.columns.length}/${run.rasterColumns.map(scalagramColumnRevision).join(',')}/${height}/${referencePowerRef.current}`;
         activeKeys.add(key);
         let raster = rasterCacheRef.current.get(key);
         if (!raster) {
@@ -462,13 +481,14 @@ export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay
           if (!visible.includes(run)) continue;
           const left = (run.startTimeUs - start) / windowUs * width;
           const right = (run.endTimeUs - start) / windowUs * width;
-          context.drawImage(raster, left, 0, right - left, height);
+          context.drawImage(raster, run.sourceX, 0, run.sourceWidth, raster.height, left, 0, right - left, height);
           if (run === tiles.at(-1) && !unavailable && diagnosticsRef.current.continuousAtPresentation) {
             const lastColumn = run.columns.at(-1)!;
             const extendedEnd = scalagramPresentationEdgeEnd(lastColumn.requestedTimeUs, SCALAGRAM_HOP_US, end, false);
             if (extendedEnd > run.endTimeUs) {
               const extendedRight = (extendedEnd - start) / windowUs * width;
-              context.drawImage(raster, raster.width - 1, 0, 1, raster.height, right, 0, extendedRight - right, height);
+              const finalSourceX = run.sourceX + run.sourceWidth - 1;
+              context.drawImage(raster, finalSourceX, 0, 1, raster.height, right, 0, extendedRight - right, height);
             }
           }
         }
@@ -525,6 +545,10 @@ export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay
       data-scalagram-continuous-at-presentation={diagnosticsRef.current.continuousAtPresentation}
       data-scalagram-requested-first-time={diagnosticsRef.current.requestedFirstTimeUs || undefined}
       data-scalagram-requested-last-time={diagnosticsRef.current.requestedLastTimeUs || undefined}
+      data-scalagram-channel={channel.id}
+      data-scalagram-clock-generation={clock?.generation}
+      data-scalagram-bootstrap-revision={bootstrapRevision}
+      data-scalagram-live-cursor={lastHopRef.current ?? undefined}
       data-scalagram-analysis-key={analysisKeyRef.current} data-scalagram-unavailable={unavailable || undefined}
       sx={{ display: 'block', width: '100%', height: 170, bgcolor: '#071017' }} />
     <Box component="span" data-scalagram-quality-label="true" sx={{ position: 'absolute', top: 4, right: 5, px: 0.5, py: 0.25, color: '#d8e2e8', fontFamily: 'monospace', fontSize: 10, lineHeight: 1.2, pointerEvents: 'none' }}>

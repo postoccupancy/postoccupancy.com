@@ -175,7 +175,7 @@ export function prepareCwtAnalysis(
       effectiveSampleRate: input.effectiveSampleRate,
     };
   }
-  return { effectiveSampleRate: input.effectiveSampleRate, runs, ...created };
+  return { ...created, effectiveSampleRate: input.effectiveSampleRate, runs };
 }
 
 function nearestIndex(observations: SpectrumObservation[], timeUs: number, intervalUs: number) {

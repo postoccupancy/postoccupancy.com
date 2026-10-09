@@ -56,6 +56,19 @@ test('scalagram helpers preserve timestamp gaps, bounds, and bounded history', (
   expect(scalagramFrequencyLabels(columns[0].frequenciesHz)).toEqual({ top: '40 Hz', bottom: '0.5 Hz' });
 });
 
+test('raster tiles include adjacent guard columns without bridging real gaps', () => {
+  const continuous = Array.from({ length: 33 }, (_, index) => cwtColumn(index * SCALAGRAM_HOP_US));
+  const tiles = scalagramRasterTiles(continuous);
+  expect(tiles).toHaveLength(3);
+  expect(tiles[0].rasterColumns.at(-1)).toBe(tiles[1].columns[0]);
+  expect(tiles[1].rasterColumns[0]).toBe(tiles[0].columns.at(-1));
+  expect(tiles[1]).toMatchObject({ sourceX: 1, sourceWidth: 16 });
+  const separated = scalagramRasterTiles([cwtColumn(0), cwtColumn(2 * SCALAGRAM_HOP_US)]);
+  expect(separated).toHaveLength(2);
+  expect(separated[0].rasterColumns).toEqual(separated[0].columns);
+  expect(separated[1].rasterColumns).toEqual(separated[1].columns);
+});
+
 test('scalagram uses stable logarithmic power and distinct boundary opacity', () => {
   expect(scalagramPowerLevel(1, 1)).toBe(1);
   expect(scalagramPowerLevel(1e-6, 1)).toBeCloseTo(0);

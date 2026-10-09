@@ -170,6 +170,18 @@ test('reuses compatible Morlet kernels across incremental preparations', () => {
   expect(second.frequenciesHz).toBe(first.frequenciesHz);
 });
 
+test('kernel reuse replaces a short bootstrap run with the growing timeline', () => {
+  const bootstrapInput = prepareReconstructedAnalysis(signal(100, 0.12, (time) => Math.sin(TAU * 4 * time)), 0)!;
+  const growingInput = prepareReconstructedAnalysis(signal(100, 20, (time) => Math.sin(TAU * 4 * time)), 0)!;
+  const bootstrap = prepareCwtAnalysis(bootstrapInput);
+  if ('status' in bootstrap) throw new Error(bootstrap.reason);
+  const current = prepareCwtAnalysis(growingInput, {}, bootstrap);
+  if ('status' in current) throw new Error(current.reason);
+  expect(current.kernels).toBe(bootstrap.kernels);
+  expect(current.runs).not.toBe(bootstrap.runs);
+  expect(current.runs[0].observations).toHaveLength(2_001);
+});
+
 test('finds actual nearby observations under realistic cumulative timestamp drift', () => {
   const observations = Array.from({ length: 1_000 }, (_, index) => ({ key: index, t: index * 10_020, v: Math.sin(TAU * index / 100) }));
   const input = {
