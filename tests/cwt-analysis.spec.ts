@@ -157,3 +157,13 @@ test('selected-timestamp analysis is deterministic and finite', () => {
   expect(Array.from(second.power)).toEqual(Array.from(first.power));
   expect([...first.real, ...first.imaginary, ...first.power].every(Number.isFinite)).toBe(true);
 });
+
+test('reuses compatible Morlet kernels across incremental preparations', () => {
+  const input = prepareReconstructedAnalysis(signal(100, 20, (time) => Math.sin(TAU * 7 * time)), 0)!;
+  const first = prepareCwtAnalysis(input);
+  if ('status' in first) throw new Error(first.reason);
+  const second = prepareCwtAnalysis(input, {}, first);
+  if ('status' in second) throw new Error(second.reason);
+  expect(second.kernels).toBe(first.kernels);
+  expect(second.frequenciesHz).toBe(first.frequenciesHz);
+});

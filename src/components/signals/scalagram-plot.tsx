@@ -1,0 +1,367 @@
+'use client';
+
+import { memo, useEffect, useRef, useState } from 'react';
+import Box from '@mui/material/Box';
+import type { Channel, NodeClock } from '@/lib/signals/router-client';
+import {
+  analyzeCwtAtTimestamps,
+  prepareCwtAnalysis,
+  type CwtColumn,
+  type CwtResult,
+  type CwtKernelSet,
+} from '@/lib/signals/cwt-analysis';
+import { prepareReconstructedAnalysis } from '@/lib/signals/spectrum-analysis';
+
+export const SCALAGRAM_HOP_US = 500_000;
+const HISTORY_US = 65_000_000;
+const INITIAL_HISTORY_US = 3_000_000;
+const BACKFILL_CHUNK_US = 5_000_000;
+const RASTER_TILE_COLUMNS = 16;
+const POWER_RANGE_DB = 60;
+
+export interface ScalagramTimeRun {
+  columns: CwtColumn[];
+  startTimeUs: number;
+  endTimeUs: number;
+}
+
+export function mergeScalagramColumns(existing: CwtColumn[], incoming: CwtColumn[]) {
+  const columns = new Map(existing.map((column) => [column.requestedTimeUs, column]));
+  for (const column of incoming) columns.set(column.requestedTimeUs, column);
+  return [...columns.values()].sort((left, right) => left.requestedTimeUs - right.requestedTimeUs);
+}
+
+export function scalagramTimeRuns(columns: CwtColumn[], hopUs = SCALAGRAM_HOP_US): ScalagramTimeRun[] {
+  const runs: CwtColumn[][] = [];
+  for (const column of columns) {
+    const run = runs.at(-1);
+    if (!run || column.requestedTimeUs - run.at(-1)!.requestedTimeUs > hopUs * 1.5) runs.push([column]);
+    else run.push(column);
+  }
+  return runs.map((run) => ({
+    columns: run,
+    startTimeUs: run[0].requestedTimeUs - hopUs / 2,
+    endTimeUs: run.at(-1)!.requestedTimeUs + hopUs / 2,
+  }));
+}
+
+export function scalagramRasterTiles(columns: CwtColumn[], hopUs = SCALAGRAM_HOP_US) {
+  const tiles: CwtColumn[][] = [];
+  for (const column of columns) {
+    const tile = tiles.at(-1);
+    const previous = tile?.at(-1);
+    const bucket = Math.floor(column.requestedTimeUs / (hopUs * RASTER_TILE_COLUMNS));
+    const previousBucket = previous ? Math.floor(previous.requestedTimeUs / (hopUs * RASTER_TILE_COLUMNS)) : -1;
+    if (!tile || !previous || column.requestedTimeUs - previous.requestedTimeUs > hopUs * 1.5 || bucket !== previousBucket) tiles.push([column]);
+    else tile.push(column);
+  }
+  return tiles.map((columns) => ({
+    columns,
+    startTimeUs: columns[0].requestedTimeUs - hopUs / 2,
+    endTimeUs: columns.at(-1)!.requestedTimeUs + hopUs / 2,
+  }));
+}
+
+export function visibleScalagramRuns(runs: ScalagramTimeRun[], startTimeUs: number, endTimeUs: number) {
+  return runs.filter((run) => run.endTimeUs > startTimeUs && run.startTimeUs < endTimeUs);
+}
+
+export function scalagramFrequencyLabels(frequenciesHz: Float64Array) {
+  const label = (value: number) => `${Number(value.toFixed(value < 10 ? 2 : 1))} Hz`;
+  return { top: label(frequenciesHz.at(-1) ?? 0), bottom: label(frequenciesHz[0] ?? 0) };
+}
+
+export function scalagramQualityLabel(column?: CwtColumn) {
+  if (!column) return 'waiting';
+  return `run ${column.quality.status} · ${(column.quality.reconstructedFraction * 100).toFixed(1)}% interpolated`;
+}
+
+/** Fixed-history logarithmic mapping: the frozen reference is 0 dB and powers 60 dB below it are black. */
+export function scalagramPowerLevel(power: number, referencePower: number) {
+  if (!(power > 0) || !(referencePower > 0)) return 0;
+  return Math.max(0, Math.min(1, (10 * Math.log10(power / referencePower) + POWER_RANGE_DB) / POWER_RANGE_DB));
+}
+
+export function scalagramPowerReference(columns: CwtColumn[]) {
+  let maximum = 0;
+  for (const column of columns) {
+    for (let band = 0; band < column.power.length; band++) {
+      if (column.valid[band]) maximum = Math.max(maximum, column.power[band]);
+    }
+  }
+  return Math.max(maximum, 1e-24);
+}
+
+export function scalagramBandOpacity(valid: boolean, edgeAffected: boolean) {
+  return valid ? 255 : edgeAffected ? 90 : 0;
+}
+
+export function pruneScalagramColumns(columns: CwtColumn[], endTimeUs: number) {
+  return columns.filter((column) => column.requestedTimeUs >= endTimeUs - HISTORY_US);
+}
+
+function hslToRgb(hue: number, saturation: number, lightness: number) {
+  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
+  const section = hue / 60;
+  const intermediate = chroma * (1 - Math.abs(section % 2 - 1));
+  const [red, green, blue] = section < 1 ? [chroma, intermediate, 0]
+    : section < 2 ? [intermediate, chroma, 0]
+      : section < 3 ? [0, chroma, intermediate]
+        : section < 4 ? [0, intermediate, chroma]
+          : section < 5 ? [intermediate, 0, chroma]
+            : [chroma, 0, intermediate];
+  const match = lightness - chroma / 2;
+  return [red + match, green + match, blue + match].map((value) => Math.round(value * 255));
+}
+
+function buildTileRaster(run: ScalagramTimeRun, height: number, referencePower: number) {
+  const raster = document.createElement('canvas');
+  raster.width = run.columns.length;
+  raster.height = height;
+  const context = raster.getContext('2d')!;
+  const image = context.createImageData(raster.width, height);
+  for (let x = 0; x < run.columns.length; x++) {
+    const column = run.columns[x];
+    const maximumBand = column.power.length - 1;
+    for (let y = 0; y < height; y++) {
+      const bandPosition = (1 - y / Math.max(1, height - 1)) * maximumBand;
+      const low = Math.floor(bandPosition);
+      const high = Math.min(maximumBand, low + 1);
+      const mix = bandPosition - low;
+      const power = column.power[low] * (1 - mix) + column.power[high] * mix;
+      const valid = Boolean(column.valid[low] && column.valid[high]);
+      const edgeAffected = Boolean(column.edgeAffected[low] || column.edgeAffected[high]);
+      const level = scalagramPowerLevel(power, referencePower);
+      const legacyValue = level * 255;
+      const [red, green, blue] = hslToRgb(240 - legacyValue * 0.8, 0.9, legacyValue * 0.28 / 100);
+      const offset = (y * raster.width + x) * 4;
+      image.data[offset] = red;
+      image.data[offset + 1] = green;
+      image.data[offset + 2] = blue;
+      image.data[offset + 3] = scalagramBandOpacity(valid, edgeAffected);
+    }
+  }
+  context.putImageData(image, 0, 0);
+  return raster;
+}
+
+function successful(results: CwtResult[]) {
+  return results.filter((result): result is CwtColumn => result.status === 'ok');
+}
+
+function hopTimes(first: number, last: number) {
+  if (last < first) return [];
+  return Array.from({ length: Math.floor((last - first) / SCALAGRAM_HOP_US) + 1 }, (_, index) => first + index * SCALAGRAM_HOP_US);
+}
+
+export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay, windowSeconds, aggregationMs, refreshKey, label, onAnalysisRate }: {
+  channel: Channel;
+  clock?: NodeClock;
+  delay: number;
+  windowSeconds: number;
+  aggregationMs: number;
+  refreshKey: number;
+  label: string;
+  onAnalysisRate?: (channelId: string, aggregationMs: number, rate: number) => void;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const historyRef = useRef<CwtColumn[]>([]);
+  const lastHopRef = useRef<number | null>(null);
+  const analysisKeyRef = useRef('');
+  const rasterCacheRef = useRef(new Map<string, HTMLCanvasElement>());
+  const kernelsRef = useRef<CwtKernelSet | undefined>(undefined);
+  const referencePowerRef = useRef(1e-24);
+  const preparationMsRef = useRef(0);
+  const initialDisplayMsRef = useRef(0);
+  const initialColumnsRef = useRef(0);
+  const backfillMsRef = useRef(0);
+  const incrementalMsRef = useRef(0);
+  const [revision, setRevision] = useState(0);
+  const [unavailable, setUnavailable] = useState('');
+  const analysisKey = `${channel.id}/${clock?.generation ?? -1}/${delay}/${aggregationMs}`;
+  const inputRef = useRef({ channel, clock, delay, aggregationMs });
+  inputRef.current = { channel, clock, delay, aggregationMs };
+
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!input.clock) return;
+    let cancelled = false;
+    let timer = 0;
+    const started = performance.now();
+    const end = input.clock.timeUs + (performance.now() - input.clock.atMs) * 1000 - input.delay * 1e6;
+    const samples: Array<{ seq: number; t: number; v: number }> = [];
+    input.channel.ring.visitRange(end - 70_000_000, end, (sample) => samples.push(sample));
+    analysisKeyRef.current = analysisKey;
+    historyRef.current = [];
+    lastHopRef.current = null;
+    rasterCacheRef.current.clear();
+    referencePowerRef.current = 1e-24;
+    kernelsRef.current = undefined;
+    preparationMsRef.current = 0;
+    initialDisplayMsRef.current = 0;
+    initialColumnsRef.current = 0;
+    backfillMsRef.current = 0;
+    incrementalMsRef.current = 0;
+    setUnavailable('');
+    if (!samples.length) { setRevision((value) => value + 1); return; }
+
+    const preparationStarted = performance.now();
+    const reconstructed = prepareReconstructedAnalysis(samples, input.aggregationMs);
+    const preparedResult = reconstructed ? prepareCwtAnalysis(reconstructed) : null;
+    preparationMsRef.current = performance.now() - preparationStarted;
+    if (!preparedResult || 'status' in preparedResult) {
+      setUnavailable(preparedResult && 'status' in preparedResult ? preparedResult.reason : 'Insufficient reconstructed data.');
+      setRevision((value) => value + 1);
+      return;
+    }
+    const prepared = preparedResult;
+    kernelsRef.current = prepared;
+    const firstObservation = prepared.runs[0]?.observations[0];
+    if (!firstObservation) return;
+    const firstHop = Math.ceil(Math.max(firstObservation.t, end - HISTORY_US) / SCALAGRAM_HOP_US) * SCALAGRAM_HOP_US;
+    const finalHop = Math.floor(end / SCALAGRAM_HOP_US) * SCALAGRAM_HOP_US;
+    const recentFirstHop = Math.max(firstHop, Math.ceil((finalHop - INITIAL_HISTORY_US) / SCALAGRAM_HOP_US) * SCALAGRAM_HOP_US);
+    const recent = successful(analyzeCwtAtTimestamps(prepared, hopTimes(recentFirstHop, finalHop)));
+    historyRef.current = recent;
+    initialColumnsRef.current = recent.length;
+    lastHopRef.current = finalHop;
+    referencePowerRef.current = scalagramPowerReference(recent);
+    initialDisplayMsRef.current = performance.now() - started;
+    onAnalysisRate?.(channel.id, aggregationMs, prepared.effectiveSampleRate);
+    setRevision((value) => value + 1);
+
+    let cursor = firstHop;
+    const processOlderChunk = () => {
+      if (cancelled || cursor >= recentFirstHop) {
+        backfillMsRef.current = performance.now() - started;
+        if (!cancelled) setRevision((value) => value + 1);
+        return;
+      }
+      const chunkFinal = Math.min(recentFirstHop - SCALAGRAM_HOP_US, cursor + BACKFILL_CHUNK_US - SCALAGRAM_HOP_US);
+      const columns = successful(analyzeCwtAtTimestamps(prepared, hopTimes(cursor, chunkFinal)));
+      historyRef.current = mergeScalagramColumns(historyRef.current, columns);
+      cursor = chunkFinal + SCALAGRAM_HOP_US;
+      setRevision((value) => value + 1);
+      timer = window.setTimeout(processOlderChunk, 0);
+    };
+    if (cursor < recentFirstHop) timer = window.setTimeout(processOlderChunk, 0);
+    else backfillMsRef.current = performance.now() - started;
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [aggregationMs, analysisKey, channel.id, onAnalysisRate]);
+
+  useEffect(() => {
+    void refreshKey;
+    if (!clock || analysisKeyRef.current !== analysisKey || lastHopRef.current === null) return;
+    const end = clock.timeUs + (performance.now() - clock.atMs) * 1000 - delay * 1e6;
+    const firstHop = lastHopRef.current + SCALAGRAM_HOP_US;
+    const finalHop = Math.floor(end / SCALAGRAM_HOP_US) * SCALAGRAM_HOP_US;
+    if (firstHop > finalHop) return;
+    const started = performance.now();
+    const samples: Array<{ seq: number; t: number; v: number }> = [];
+    channel.ring.visitRange(end - 70_000_000, end, (sample) => samples.push(sample));
+    const reconstructed = prepareReconstructedAnalysis(samples, aggregationMs);
+    const prepared = reconstructed ? prepareCwtAnalysis(reconstructed, {}, kernelsRef.current) : null;
+    if (!prepared || 'status' in prepared) {
+      if (prepared && 'status' in prepared) setUnavailable(prepared.reason);
+      return;
+    }
+    kernelsRef.current = prepared;
+    const columns = successful(analyzeCwtAtTimestamps(prepared, hopTimes(firstHop, finalHop)));
+    historyRef.current = pruneScalagramColumns(mergeScalagramColumns(historyRef.current, columns), end);
+    lastHopRef.current = finalHop;
+    incrementalMsRef.current = performance.now() - started;
+    setUnavailable('');
+    onAnalysisRate?.(channel.id, aggregationMs, prepared.effectiveSampleRate);
+    setRevision((value) => value + 1);
+  }, [aggregationMs, analysisKey, channel, clock, delay, onAnalysisRate, refreshKey]);
+
+  useEffect(() => {
+    void revision;
+    const canvas = canvasRef.current;
+    const context = canvas?.getContext('2d');
+    if (!canvas || !context || !clock) return;
+    let frame = 0;
+    const columns = historyRef.current;
+    const tiles = scalagramRasterTiles(columns);
+    const labels = columns[0] ? scalagramFrequencyLabels(columns[0].frequenciesHz) : null;
+    let rasterHeight = 0;
+    let rasters: Array<{ run: ScalagramTimeRun; canvas: HTMLCanvasElement }> = [];
+    const ensureRasters = (height: number) => {
+      if (height === rasterHeight) return;
+      rasterHeight = height;
+      const activeKeys = new Set<string>();
+      rasters = tiles.map((run) => {
+        const key = `${run.columns[0].requestedTimeUs}/${run.columns.at(-1)!.requestedTimeUs}/${run.columns.length}/${height}/${referencePowerRef.current}`;
+        activeKeys.add(key);
+        let raster = rasterCacheRef.current.get(key);
+        if (!raster) {
+          raster = buildTileRaster(run, height, referencePowerRef.current);
+          rasterCacheRef.current.set(key, raster);
+        }
+        return { run, canvas: raster };
+      });
+      for (const key of rasterCacheRef.current.keys()) if (!activeKeys.has(key)) rasterCacheRef.current.delete(key);
+    };
+    const draw = (now: number) => {
+      const rect = canvas.getBoundingClientRect();
+      const ratio = window.devicePixelRatio || 1;
+      const width = Math.max(1, Math.floor(rect.width * ratio));
+      const height = Math.max(1, Math.floor(rect.height * ratio));
+      if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; rasterHeight = 0; }
+      context.clearRect(0, 0, width, height);
+      const end = clock.timeUs + (now - clock.atMs) * 1000 - delay * 1e6;
+      const windowUs = windowSeconds * 1e6;
+      const start = end - windowUs;
+      const visible = visibleScalagramRuns(tiles, start, end);
+      if (visible.length && labels) {
+        ensureRasters(height);
+        context.save();
+        context.beginPath(); context.rect(0, 0, width, height); context.clip();
+        context.imageSmoothingEnabled = true;
+        context.imageSmoothingQuality = 'high';
+        for (const { run, canvas: raster } of rasters) {
+          if (!visible.includes(run)) continue;
+          const left = (run.startTimeUs - start) / windowUs * width;
+          const right = (run.endTimeUs - start) / windowUs * width;
+          context.drawImage(raster, left, 0, right - left, height);
+        }
+        context.restore();
+        context.fillStyle = '#d8e2e8'; context.font = `${10 * ratio}px monospace`; context.textAlign = 'left';
+        context.textBaseline = 'top'; context.fillText(labels.top, 5 * ratio, 4 * ratio);
+        context.textBaseline = 'bottom'; context.fillText(labels.bottom, 5 * ratio, height - 4 * ratio);
+      } else {
+        context.fillStyle = '#8ba0af'; context.font = `${12 * ratio}px monospace`; context.textAlign = 'center'; context.textBaseline = 'middle';
+        context.fillText(unavailable || 'Insufficient reconstructed data', width / 2, height / 2);
+      }
+      frame = requestAnimationFrame(draw);
+    };
+    frame = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(frame);
+  }, [clock, delay, revision, unavailable, windowSeconds]);
+
+  const latest = historyRef.current.at(-1);
+  const state = latest
+    ? `${label}. Scalagram. ${historyRef.current.length} timestamped columns. ${latest.frequenciesHz[0].toFixed(2)} to ${latest.frequenciesHz.at(-1)!.toFixed(2)} Hz.`
+    : `${label}. Scalagram. ${unavailable || 'Insufficient reconstructed data'}`;
+  return <Box sx={{ position: 'relative', width: '100%', height: 170 }}>
+    <Box component="canvas" ref={canvasRef} role="img" aria-label={state}
+      data-scalagram-columns={historyRef.current.length} data-scalagram-hop-ms={SCALAGRAM_HOP_US / 1000}
+      data-scalagram-rate={latest?.effectiveSampleRate} data-scalagram-min-frequency={latest?.frequenciesHz[0]}
+      data-scalagram-max-frequency={latest?.frequenciesHz.at(-1)} data-scalagram-quality={latest?.quality.status}
+      data-scalagram-reconstructed-fraction={latest?.quality.reconstructedFraction}
+      data-scalagram-first-time={historyRef.current[0]?.requestedTimeUs} data-scalagram-last-time={latest?.requestedTimeUs}
+      data-scalagram-valid-bands={latest ? Array.from(latest.valid).reduce((sum, value) => sum + value, 0) : undefined}
+      data-scalagram-edge-bands={latest ? Array.from(latest.edgeAffected).reduce((sum, value) => sum + value, 0) : undefined}
+      data-scalagram-raster-cache={rasterCacheRef.current.size} data-scalagram-reference-power={referencePowerRef.current}
+      data-scalagram-initial-display-ms={initialDisplayMsRef.current.toFixed(1)}
+      data-scalagram-initial-columns={initialColumnsRef.current}
+      data-scalagram-backfill-ms={backfillMsRef.current.toFixed(1)}
+      data-scalagram-preparation-ms={preparationMsRef.current.toFixed(1)}
+      data-scalagram-incremental-ms={incrementalMsRef.current.toFixed(1)}
+      data-scalagram-analysis-key={analysisKeyRef.current} data-scalagram-unavailable={unavailable || undefined}
+      sx={{ display: 'block', width: '100%', height: 170, bgcolor: '#071017' }} />
+    <Box component="span" data-scalagram-quality-label="true" sx={{ position: 'absolute', top: 4, right: 5, px: 0.5, py: 0.25, color: '#d8e2e8', fontFamily: 'monospace', fontSize: 10, lineHeight: 1.2, pointerEvents: 'none' }}>
+      {scalagramQualityLabel(latest)}
+    </Box>
+  </Box>;
+});

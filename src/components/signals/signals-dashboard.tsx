@@ -12,6 +12,7 @@ import { useSignalRouter } from './router-provider';
 import { ScopePlot } from './scope-plot';
 import { SpectrumPlot } from './spectrum-plot';
 import { SpectrogramPlot } from './spectrogram-plot';
+import { ScalagramPlot } from './scalagram-plot';
 import { estimateAnalysisSampleRate } from '@/lib/signals/spectrum-analysis';
 import type { Channel, NodeClock } from '@/lib/signals/router-client';
 
@@ -69,7 +70,7 @@ export function SignalsDashboard() {
     mode: settings.spectralMode,
     frequencyScale: settings.spectralFrequencyScale,
   }), [settings.spectralFftSize, settings.spectralWelchSegments, settings.spectralBandAverage, settings.spectralMode, settings.spectralFrequencyScale]);
-  const [view, setView] = useState<'waveform' | 'spectrum' | 'spectrogram'>('waveform');
+  const [view, setView] = useState<'waveform' | 'spectrum' | 'spectrogram' | 'scalagram'>('waveform');
   const [windowIndex, setWindowIndex] = useState(7);
   const [aggregationIndex, setAggregationIndex] = useState(0);
   const [analysisRates, setAnalysisRates] = useState<Record<string, number>>({});
@@ -105,6 +106,7 @@ export function SignalsDashboard() {
           <ToggleButton value="waveform">Waveform</ToggleButton>
           <ToggleButton value="spectrum">Spectrum</ToggleButton>
           <ToggleButton value="spectrogram">Spectrogram</ToggleButton>
+          <ToggleButton value="scalagram">Scalagram</ToggleButton>
         </ToggleButtonGroup>
         <Box sx={{ maxWidth: 420 }}>
           <Stack direction="row" sx={{ justifyContent: 'space-between' }}>
@@ -152,6 +154,7 @@ export function SignalsDashboard() {
               {view === 'waveform' && <><WaveformRateReporter channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} windowSeconds={windowSeconds} aggregationMs={aggregationMs} refreshKey={channel.receivedAt} onAnalysisRate={reportAnalysisRate} /><ScopePlot channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} color={colors[channel.param] || '#9bc9d8'} scale={scale} decimals={decimals} windowSeconds={windowSeconds} aggregationMs={aggregationMs} label={`${source} ${name}: ${value}. Last ${windowSeconds} seconds. Aggregation ${aggregationLabel(aggregationMs)}${stale ? ', stale data' : ''}.`} /></>}
               {view === 'spectrum' && <SpectrumPlot channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} color={colors[channel.param] || '#9bc9d8'} windowSeconds={windowSeconds} aggregationMs={aggregationMs} spectralSettings={spectralSettings} refreshKey={channel.receivedAt} label={`${source} ${name}`} onAnalysisRate={reportAnalysisRate} />}
               {view === 'spectrogram' && <SpectrogramPlot channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} windowSeconds={windowSeconds} aggregationMs={aggregationMs} spectralSettings={spectralSettings} refreshKey={channel.receivedAt} label={`${source} ${name}`} onAnalysisRate={reportAnalysisRate} />}
+              {view === 'scalagram' && <ScalagramPlot channel={channel} clock={router.clocks.get(channel.node)} delay={presentationDelay} windowSeconds={windowSeconds} aggregationMs={aggregationMs} refreshKey={channel.receivedAt} label={`${source} ${name}`} onAnalysisRate={reportAnalysisRate} />}
             </Box>
           );
         })}

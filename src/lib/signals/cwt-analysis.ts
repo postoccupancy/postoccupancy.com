@@ -33,19 +33,24 @@ export interface CwtKernel {
   imaginary: Float64Array;
 }
 
+export interface CwtKernelSet {
+  sampleRate: number;
+  configurationKey: string;
+  frequenciesHz: Float64Array;
+  kernels: CwtKernel[];
+  omega0: number;
+  supportScale: number;
+}
+
 interface CwtPreparedRun {
   observations: SpectrumObservation[];
   centeredValues: Float64Array;
   quality: AnalysisQuality;
 }
 
-export interface PreparedCwtAnalysis {
+export interface PreparedCwtAnalysis extends CwtKernelSet {
   effectiveSampleRate: number;
-  frequenciesHz: Float64Array;
-  kernels: CwtKernel[];
   runs: CwtPreparedRun[];
-  omega0: number;
-  supportScale: number;
 }
 
 export interface CwtColumn {
@@ -83,7 +88,7 @@ function logarithmicFrequencies(minimum: number, maximum: number, count: number)
   return result;
 }
 
-export function createMorletKernels(sampleRate: number, configuration: CwtConfiguration = {}) {
+function resolvedConfiguration(sampleRate: number, configuration: CwtConfiguration) {
   if (!(sampleRate > 0) || !Number.isFinite(sampleRate)) return null;
   const minimum = configuration.minimumFrequencyHz ?? DEFAULT_MINIMUM_HZ;
   const maximum = configuration.maximumFrequencyHz ?? Math.min(40, sampleRate * 0.4);
@@ -91,6 +96,13 @@ export function createMorletKernels(sampleRate: number, configuration: CwtConfig
   const omega0 = configuration.omega0 ?? DEFAULT_OMEGA0;
   const supportScale = configuration.supportScale ?? DEFAULT_SUPPORT_SCALE;
   if (!(minimum > 0) || !(maximum >= minimum) || maximum >= sampleRate / 2 || count < 1 || !(omega0 > 0) || !(supportScale > 0)) return null;
+  return { minimum, maximum, count, omega0, supportScale, key: `${minimum}/${maximum}/${count}/${omega0}/${supportScale}` };
+}
+
+export function createMorletKernels(sampleRate: number, configuration: CwtConfiguration = {}) {
+  const resolved = resolvedConfiguration(sampleRate, configuration);
+  if (!resolved) return null;
+  const { minimum, maximum, count, omega0, supportScale, key: configurationKey } = resolved;
   const frequenciesHz = logarithmicFrequencies(minimum, maximum, count);
   const kernels = Array.from(frequenciesHz, (frequencyHz): CwtKernel => {
     const scaleSeconds = omega0 / (2 * Math.PI * frequencyHz);
@@ -114,11 +126,19 @@ export function createMorletKernels(sampleRate: number, configuration: CwtConfig
     }
     return { frequencyHz, scaleSeconds, halfWidthSamples, real, imaginary };
   });
-  return { frequenciesHz, kernels, omega0, supportScale };
+  return { sampleRate, configurationKey, frequenciesHz, kernels, omega0, supportScale } satisfies CwtKernelSet;
 }
 
-export function prepareCwtAnalysis(input: ReconstructedAnalysisInput, configuration: CwtConfiguration = {}): PreparedCwtAnalysis | CwtUnavailable {
-  const created = createMorletKernels(input.effectiveSampleRate, configuration);
+export function prepareCwtAnalysis(
+  input: ReconstructedAnalysisInput,
+  configuration: CwtConfiguration = {},
+  reusableKernels?: CwtKernelSet,
+): PreparedCwtAnalysis | CwtUnavailable {
+  const resolved = resolvedConfiguration(input.effectiveSampleRate, configuration);
+  const created = resolved && reusableKernels?.sampleRate === input.effectiveSampleRate
+    && reusableKernels.configurationKey === resolved.key
+    ? reusableKernels
+    : createMorletKernels(input.effectiveSampleRate, configuration);
   if (!created) {
     return {
       status: 'unsupported',
