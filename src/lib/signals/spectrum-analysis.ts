@@ -23,6 +23,16 @@ export interface SpectrumObservation {
   interpolated?: boolean;
   interpolationGapUs?: number;
 }
+export interface ReconstructedAnalysisRun {
+  observations: SpectrumObservation[];
+  quality: AnalysisQuality;
+}
+export interface ReconstructedAnalysisInput {
+  runs: ReconstructedAnalysisRun[];
+  effectiveSampleRate: number;
+  expectedUs: number;
+  aggregationMs: number;
+}
 export interface SpectrumPreparation {
   observations: SpectrumObservation[];
   quality: AnalysisQuality;
@@ -221,6 +231,17 @@ function spectrumRuns(samples: ReadonlyArray<Sample>, aggregationMs: number) {
     runs = reconstructedNativeRuns(samples, expectedUs);
   }
   return { runs, expectedUs };
+}
+
+export function prepareReconstructedAnalysis(samples: ReadonlyArray<Sample>, aggregationMs: number): ReconstructedAnalysisInput | null {
+  const result = spectrumRuns(samples, aggregationMs);
+  if (!result) return null;
+  return {
+    runs: result.runs.map((observations) => ({ observations, quality: analysisQuality(observations) })),
+    effectiveSampleRate: 1e6 / result.expectedUs,
+    expectedUs: result.expectedUs,
+    aggregationMs,
+  };
 }
 
 export function prepareSpectrogramTimeline(samples: ReadonlyArray<Sample>, aggregationMs: number): PreparedSpectrogramTimeline | null {
