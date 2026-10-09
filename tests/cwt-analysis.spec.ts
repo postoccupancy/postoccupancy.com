@@ -201,3 +201,23 @@ test('recent edge coefficients mature when their derived support becomes availab
   expect(matureColumn.valid[band]).toBe(1);
   expect(matureColumn.power[band]).not.toBe(earlyColumn.power[band]);
 });
+
+test('accepts Indoor Sky-like 100 Hz timing at absolute 250 ms analysis hops', () => {
+  let timeUs = 131_279_072_714;
+  const intervals = [10_000, 9_999, 10_001, 10_130, 9_999, 10_000];
+  const samples = Array.from({ length: 1_200 }, (_, index) => {
+    if (index) timeUs += intervals[index % intervals.length];
+    return { seq: 13_127_783 + index, t: timeUs, v: Math.sin(TAU * 5 * index / 100) };
+  });
+  const input = prepareReconstructedAnalysis(samples, 0)!;
+  expect(input.runs).toHaveLength(1);
+  const prepared = prepareCwtAnalysis(input);
+  if ('status' in prepared) throw new Error(prepared.reason);
+  const first = Math.ceil(samples[0].t / 250_000) * 250_000;
+  const last = Math.floor(samples.at(-1)!.t / 250_000) * 250_000;
+  const times = Array.from({ length: Math.floor((last - first) / 250_000) + 1 }, (_, index) => first + index * 250_000);
+  const result = analyzeCwtAtTimestampsWithDiagnostics(prepared, times);
+  expect(result.successful).toBe(times.length);
+  expect(result.rejected).toBe(0);
+  expect(result.rejectionReasons).toEqual({});
+});

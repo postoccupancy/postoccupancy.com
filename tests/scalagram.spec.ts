@@ -7,6 +7,7 @@ import {
   scalagramFrequencyLabels,
   scalagramPowerLevel,
   scalagramPowerReference,
+  scalagramPresentationEdgeEnd,
   scalagramQualityLabel,
   scalagramRasterTiles,
   scalagramTimeRuns,
@@ -76,6 +77,12 @@ test('historical calibration is deterministic and column maturation invalidates 
   expect(scalagramColumnRevision(edge)).not.toBe(revision);
 });
 
+test('right-edge extension is bounded and never covers stale or missing analysis', () => {
+  expect(scalagramPresentationEdgeEnd(1_000_000, 250_000, 1_200_000, false)).toBe(1_200_000);
+  expect(scalagramPresentationEdgeEnd(1_000_000, 250_000, 1_400_000, false)).toBe(1_125_000);
+  expect(scalagramPresentationEdgeEnd(1_000_000, 250_000, 1_200_000, true)).toBe(1_125_000);
+});
+
 test('renders ten progressive scalagrams and cancels obsolete aggregation work', async ({ page }) => {
   const sockets: WebSocketRoute[] = [];
   await page.routeWebSocket('wss://rf.postoccupancy.com', (socket) => {
@@ -128,7 +135,7 @@ test('preserves the view through an initial preparation failure and recovers wit
   await page.goto('/');
   await page.getByRole('button', { name: 'Scalagram', exact: true }).click();
   const plot = page.locator('canvas[data-scalagram-columns]');
-  await expect(plot).toHaveAttribute('data-scalagram-unavailable', /Insufficient/);
+  await expect(plot).toHaveAttribute('data-scalagram-unavailable', /Waiting for presentation buffer/);
   socket!.send(JSON.stringify({
     type: 'sample_batch', sendTimeUs: 112_000_000,
     streams: [{

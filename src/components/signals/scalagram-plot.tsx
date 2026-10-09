@@ -121,6 +121,18 @@ export function scalagramColumnRevision(column: CwtColumn) {
   return `${column.analysisTimeUs}:${valid}:${edge}:${power.toExponential(6)}`;
 }
 
+export function scalagramPresentationEdgeEnd(
+  lastColumnTimeUs: number,
+  hopUs: number,
+  presentationEndUs: number,
+  unavailable: boolean,
+  toleranceUs = 50_000,
+) {
+  const cellEnd = lastColumnTimeUs + hopUs / 2;
+  if (unavailable || presentationEndUs - lastColumnTimeUs > hopUs + toleranceUs) return cellEnd;
+  return Math.max(cellEnd, Math.min(presentationEndUs, lastColumnTimeUs + hopUs + toleranceUs));
+}
+
 function hslToRgb(hue: number, saturation: number, lightness: number) {
   const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
   const section = hue / 60;
@@ -178,9 +190,20 @@ interface ScalagramDiagnostics {
   timestampLookupFailures: number;
   reanalyzed: number;
   runLengths: number[];
+  rawSampleCount: number;
+  rawFirstTimeUs: number;
+  rawLastTimeUs: number;
+  presentationEndUs: number;
 }
 
-const emptyDiagnostics = (): ScalagramDiagnostics => ({ attempted: 0, successful: 0, rejected: 0, timestampLookupFailures: 0, reanalyzed: 0, runLengths: [] });
+const emptyDiagnostics = (): ScalagramDiagnostics => ({ attempted: 0, successful: 0, rejected: 0, timestampLookupFailures: 0, reanalyzed: 0, runLengths: [], rawSampleCount: 0, rawFirstTimeUs: 0, rawLastTimeUs: 0, presentationEndUs: 0 });
+
+function recordRawWindow(diagnostics: ScalagramDiagnostics, samples: Array<{ t: number }>, end: number) {
+  diagnostics.rawSampleCount = samples.length;
+  diagnostics.rawFirstTimeUs = samples[0]?.t ?? 0;
+  diagnostics.rawLastTimeUs = samples.at(-1)?.t ?? 0;
+  diagnostics.presentationEndUs = end;
+}
 
 export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay, windowSeconds, aggregationMs, refreshKey, label, onAnalysisRate }: {
   channel: Channel;
@@ -233,9 +256,12 @@ export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay
     backfillMsRef.current = 0;
     incrementalMsRef.current = 0;
     diagnosticsRef.current = emptyDiagnostics();
+    recordRawWindow(diagnosticsRef.current, samples, end);
     setUnavailable('');
     if (!samples.length) {
-      setUnavailable('Insufficient reconstructed data.');
+      setUnavailable(input.channel.ring.latest()?.t && input.channel.ring.latest()!.t > end
+        ? 'Waiting for presentation buffer.'
+        : 'Insufficient reconstructed data.');
       setRevision((value) => value + 1);
       return;
     }
@@ -269,6 +295,7 @@ export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay
     diagnosticsRef.current.rejected += recentResult.rejected;
     diagnosticsRef.current.timestampLookupFailures += recentResult.rejectionReasons['timestamp-outside-runs'] ?? 0;
     historyRef.current = recent;
+    if (!recent.length) setUnavailable('Waiting for presentation buffer.');
     initialColumnsRef.current = recent.length;
     lastHopRef.current = finalHop;
     initialDisplayMsRef.current = performance.now() - started;
@@ -312,6 +339,7 @@ export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay
     const started = performance.now();
     const samples: Array<{ seq: number; t: number; v: number }> = [];
     channel.ring.visitRange(end - 70_000_000, end, (sample) => samples.push(sample));
+    recordRawWindow(diagnosticsRef.current, samples, end);
     const reconstructed = prepareReconstructedAnalysis(samples, aggregationMs);
     const prepared = reconstructed ? prepareCwtAnalysis(reconstructed, {}, kernelsRef.current) : null;
     if (!prepared || 'status' in prepared) {
@@ -333,7 +361,7 @@ export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay
     historyRef.current = pruneScalagramColumns(mergeScalagramColumns(historyRef.current, result.columns), end);
     lastHopRef.current = finalHop;
     incrementalMsRef.current = performance.now() - started;
-    setUnavailable('');
+    setUnavailable(historyRef.current.length ? '' : 'Waiting for presentation buffer.');
     onAnalysisRate?.(channel.id, aggregationMs, prepared.effectiveSampleRate);
     setRevision((value) => value + 1);
   }, [aggregationMs, analysisKey, channel, clock, delay, onAnalysisRate, refreshKey]);
@@ -387,6 +415,14 @@ export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay
           const left = (run.startTimeUs - start) / windowUs * width;
           const right = (run.endTimeUs - start) / windowUs * width;
           context.drawImage(raster, left, 0, right - left, height);
+          if (run === tiles.at(-1) && !unavailable) {
+            const lastColumn = run.columns.at(-1)!;
+            const extendedEnd = scalagramPresentationEdgeEnd(lastColumn.requestedTimeUs, SCALAGRAM_HOP_US, end, false);
+            if (extendedEnd > run.endTimeUs) {
+              const extendedRight = (extendedEnd - start) / windowUs * width;
+              context.drawImage(raster, raster.width - 1, 0, 1, raster.height, right, 0, extendedRight - right, height);
+            }
+          }
         }
         context.restore();
         context.fillStyle = '#d8e2e8'; context.font = `${10 * ratio}px monospace`; context.textAlign = 'left';
@@ -429,6 +465,10 @@ export const ScalagramPlot = memo(function ScalagramPlot({ channel, clock, delay
       data-scalagram-timestamp-lookup-failures={diagnosticsRef.current.timestampLookupFailures}
       data-scalagram-missing-columns={scalagramMissingColumnCount(historyRef.current)}
       data-scalagram-reanalyzed={diagnosticsRef.current.reanalyzed}
+      data-scalagram-raw-samples={diagnosticsRef.current.rawSampleCount}
+      data-scalagram-raw-first-time={diagnosticsRef.current.rawFirstTimeUs || undefined}
+      data-scalagram-raw-last-time={diagnosticsRef.current.rawLastTimeUs || undefined}
+      data-scalagram-presentation-end={diagnosticsRef.current.presentationEndUs || undefined}
       data-scalagram-analysis-key={analysisKeyRef.current} data-scalagram-unavailable={unavailable || undefined}
       sx={{ display: 'block', width: '100%', height: 170, bgcolor: '#071017' }} />
     <Box component="span" data-scalagram-quality-label="true" sx={{ position: 'absolute', top: 4, right: 5, px: 0.5, py: 0.25, color: '#d8e2e8', fontFamily: 'monospace', fontSize: 10, lineHeight: 1.2, pointerEvents: 'none' }}>
