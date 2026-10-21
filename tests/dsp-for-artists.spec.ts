@@ -21,10 +21,18 @@ test('lesson routes expose configured controls and preserve course state', async
   await expect(page.getByRole('heading',{name:'Audio Processing'})).toBeVisible();
   await expect(page.locator('[data-control-group=audio]')).toBeVisible();
   await expect(page.locator('[data-control-group=layers]')).toHaveCount(0);
+  const fft=page.frameLocator('iframe[title="fft source sketch"]');
+  await expect(fft.locator('canvas')).toBeVisible();
+  await expect(fft.locator('label').filter({hasText:'Geometry'}).locator('select')).toHaveValue('linear');
+  await expect(fft.locator('label').filter({hasText:'Layers'}).locator('select')).toHaveValue('1');
+  await expect(fft.locator('label').filter({hasText:'Channel'}).nth(1).locator('select')).toHaveValue('raw');
   const frequency=page.getByRole('slider',{name:'Tone 1 frequency (Hz)'});await frequency.fill('220');
   await page.getByRole('link',{name:'Next'}).click();
   await expect(page).toHaveURL('/lab/dsp-for-artists/interference-patterns');
   await expect(page.locator('[data-control-group=layers]')).toBeVisible();
+  const plane=page.frameLocator('iframe[title="plane source sketch"]');
+  await expect(plane.locator('canvas')).toBeVisible();
+  await expect(plane.locator('select').first()).toHaveValue('crests');
   await expect(page.getByRole('slider',{name:'Tone 1 frequency (Hz)'})).toHaveValue('220');
   await expect(page.getByRole('slider',{name:'Tone 2 frequency (Hz)'})).toBeVisible();
 });
@@ -34,14 +42,14 @@ test('course navigation expands to all lessons and malformed shared state is har
   const nav=page.getByRole('navigation',{name:'Main navigation'});
   await expect(nav.getByRole('link',{name:'Audio Processing'})).toHaveAttribute('aria-current','page');
   await expect(nav.getByRole('link',{name:'Interference Patterns'})).toBeVisible();
-  await expect(page.getByLabel('stripes audio visualization')).toBeVisible();
+  await expect(page.getByTitle('fft source sketch')).toBeVisible();
 });
 
 test('invalid persisted controls cannot crash the animation palette', async ({page}) => {
   const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
   await page.addInitScript(()=>sessionStorage.setItem('dsp-for-artists:v1',JSON.stringify({layers:Number.NaN,palette:'missing',rmsPulseDepth:'loud'})));
   await page.goto('/lab/dsp-for-artists/interference-patterns');
-  await expect(page.getByLabel('crest audio visualization')).toBeVisible();
+  await expect(page.getByTitle('plane source sketch')).toBeVisible();
   await page.waitForTimeout(250);
   expect(errors).toEqual([]);
 });
@@ -52,7 +60,7 @@ test('presentation receives state over its session-specific channel', async ({pa
   await page.getByRole('button',{name:'Open presentation window'}).click();
   const presentation=await popupPromise;
   await expect(presentation).toHaveURL(/\/lab\/dsp-for-artists\/presentation\?session=/);
-  await expect(presentation.getByLabel('rings audio visualization')).toBeVisible();
+  await expect(presentation.getByAltText('rings live presentation')).toBeVisible();
   await expect(presentation.getByText('Waiting for the tutorial window…')).toHaveCount(0);
   await presentation.close();
 });

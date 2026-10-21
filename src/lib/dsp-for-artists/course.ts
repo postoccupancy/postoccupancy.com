@@ -5,20 +5,28 @@ export type DspMode = 'stripes' | 'rings' | 'crest' | 'pressure' | 'spectrogram'
 
 export interface DspParameters {
   source: 'oscillator' | 'microphone'; oscillatorWave: OscillatorType; frequency: number; secondFrequency: number;
+  oscillatorCutoff:number; oscillatorQ:number; oscillatorVolume:number; monitor:boolean;
   analysis: 'fft' | 'cwt'; spectrum: 'raw' | 'relative'; frequencyAxis: 'log' | 'linear'; fftSize: number;
+  cwtCycles:number;cwtAverage:number;harmonicMarkers:boolean;fixedDb:boolean;dbFloor:number;dbCeiling:number;
   mode: DspMode; layers: number; band: 'raw' | 'low' | 'mid' | 'high'; blend: 'multiply' | 'add' | 'maximum' | 'blend' | 'screen' | 'planeMultiply';
-  blendAmount: number; direction: number; phase: number; propagation: number; radialExtent: number;
+  blendAmount: number; direction: number; phase: number; propagation: number; radialExtent: number; radialSourceRadius:number;
+  layerLayout:'line'|'circle';layoutRadius:number;angleDistribution:'even'|'fixed';angleStep:number;xSpacing:number;ySpacing:number;assignment:'all'|'cycle'|'bands';
   palette: 'spectral' | 'mineral' | 'temperature' | 'mono'; rmsPulse: 'off' | 'thickness' | 'opacity'; rmsPulseDepth: number;
   rmsLuminosity: boolean; colorPulseDepth: number; pressureChroma: number; exposure: number; gate: number;
+  adaptive:boolean;adaptation:number;contrast:number;response:number;persistence:number;diffusion:number;background:number;
 }
 
 export const baseParameters: DspParameters = {
   source: 'oscillator', oscillatorWave: 'sawtooth', frequency: 110, secondFrequency: 165,
+  oscillatorCutoff:4000,oscillatorQ:.707,oscillatorVolume:35,monitor:false,
   analysis: 'fft', spectrum: 'raw', frequencyAxis: 'log', fftSize: 2048,
+  cwtCycles:6,cwtAverage:120,harmonicMarkers:true,fixedDb:false,dbFloor:-90,dbCeiling:-15,
   mode: 'stripes', layers: 1, band: 'raw', blend: 'multiply', blendAmount: .5,
-  direction: 0, phase: 0, propagation: 24, radialExtent: 400,
+  direction: 0, phase: 0, propagation: 24, radialExtent: 400,radialSourceRadius:1,
+  layerLayout:'line',layoutRadius:400,angleDistribution:'even',angleStep:60,xSpacing:120,ySpacing:0,assignment:'all',
   palette: 'spectral', rmsPulse: 'off', rmsPulseDepth: 2, rmsLuminosity: false,
   colorPulseDepth: 2, pressureChroma: 1.5, exposure: 25, gate: 0,
+  adaptive:false,adaptation:.5,contrast:1,response:0,persistence:0,diffusion:0,background:.08,
 };
 
 export interface Lesson { slug: LessonSlug; number: number; title: string; summary: string; groups: ControlGroup[]; defaults: Partial<DspParameters>; exercises: string[]; }
@@ -41,6 +49,7 @@ const options:Partial<Record<keyof DspParameters,readonly unknown[]>>={
  source:['oscillator','microphone'],oscillatorWave:['sine','sawtooth','square','triangle'],analysis:['fft','cwt'],spectrum:['raw','relative'],frequencyAxis:['log','linear'],
  mode:['stripes','rings','crest','pressure','spectrogram','scalogram'],band:['raw','low','mid','high'],blend:['multiply','add','maximum','blend','screen','planeMultiply'],
  palette:['spectral','mineral','temperature','mono'],rmsPulse:['off','thickness','opacity'],fftSize:[512,1024,2048,4096,8192,16384],
+ layerLayout:['line','circle'],angleDistribution:['even','fixed'],assignment:['all','cycle','bands'],
 };
 export function validateParameters(input: unknown): Partial<DspParameters> {
   if (!input || typeof input !== 'object') return {};
