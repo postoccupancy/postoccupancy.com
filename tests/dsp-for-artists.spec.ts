@@ -26,6 +26,8 @@ test('lesson routes expose configured controls and preserve course state', async
   await expect(fft.locator('label').filter({hasText:'Geometry'}).locator('select')).toHaveValue('linear');
   await expect(fft.locator('label').filter({hasText:'Layers'}).locator('select')).toHaveValue('1');
   await expect(fft.locator('label').filter({hasText:'Channel'}).nth(1).locator('select')).toHaveValue('raw');
+  await page.getByRole('switch',{name:'Listen to oscillator'}).check();
+  await expect(fft.locator('input[type="checkbox"]').first()).toBeChecked();
   const frequency=page.getByRole('slider',{name:'Tone 1 frequency (Hz)'});await frequency.fill('220');
   await page.getByRole('link',{name:'Next'}).click();
   await expect(page).toHaveURL('/lab/dsp-for-artists/interference-patterns');
