@@ -224,6 +224,7 @@ The current instrument labels are Resident Frequency, Pattern Party, and Weather
 - The responsive workspace keeps the canvas visible, uses independently scrolling instructions and controls on desktop, and moves controls into a MUI drawer on narrow screens. One course audio owner provides two oscillator tones or an explicitly enabled microphone; navigation cleanup stops tracks, oscillators, and the AudioContext.
 - The adapted workshop renderer retains FFT/CWT Raw and Relative analysis, stripes, rings, crest overlay, signed pressure sum, FFT/CWT history, named FFT and plane-wave blend semantics, geometry, palettes, and RMS controls. RMS and color pulse depths default to 2; plane-wave envelope controls are omitted.
 - Presentation opens `/lab/dsp-for-artists/presentation?session=<uuid>`. A session-specific `BroadcastChannel` sends validated parameter snapshots and live analysis frames; the presentation creates no AudioContext and requests no microphone permission.
+- Palette sampling treats non-finite analysis values as the palette floor, and restored session controls pass through the same validator as share links. This prevents stale or malformed state from terminating the animation loop.
 
 ## Microphone Visualizer integration
 

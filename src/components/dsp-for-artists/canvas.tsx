@@ -7,10 +7,10 @@ import { useDspCourse } from './provider';
 import type { DspParameters } from '@/lib/dsp-for-artists/course';
 
 const BANDS=256, MIN=60, MAX=6000;
-const clamp=(n:number,a=0,b=1)=>Math.max(a,Math.min(b,n));
+const clamp=(n:number,a=0,b=1)=>Number.isFinite(n)?Math.max(a,Math.min(b,n)):a;
 const hz=(i:number)=>MIN*Math.pow(MAX/MIN,i/(BANDS-1));
 function colors(name:DspParameters['palette']) { return name==='mono'?[[15,15,15],[245,245,245]]:name==='mineral'?[[23,31,37],[78,102,105],[168,137,107],[223,208,174]]:name==='temperature'?[[24,59,143],[240,232,192],[211,55,44]]:[[5,9,25],[25,35,100],[20,135,170],[225,185,70],[255,225,135]]; }
-function colorAt(stops:number[][],v:number){const p=clamp(v)*(.9999)*(stops.length-1),i=Math.floor(p),f=p-i,a=stops[i],b=stops[Math.min(stops.length-1,i+1)];return a.map((x,j)=>Math.round(x+(b[j]-x)*f));}
+export function colorAt(stops:number[][],v:number){if(!stops.length)return[0,0,0];const p=clamp(v)*(.9999)*(stops.length-1),i=Math.floor(p),f=p-i,a=stops[i]??stops[0],b=stops[Math.min(stops.length-1,i+1)]??a;return a.map((x,j)=>Math.round(x+((b[j]??x)-x)*f));}
 
 export interface AnalysisFrame { spectrum:number[]; waveform:number[]; rms:number; at:number; }
 export function DspCanvas({presentation=false, external}:{presentation?:boolean;external?:{parameters:DspParameters;frame:AnalysisFrame|null}}) {

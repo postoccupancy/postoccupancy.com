@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { baseParameters, decodeSketch, encodeSketch, lessons } from '../src/lib/dsp-for-artists/course';
+import { colorAt } from '../src/components/dsp-for-artists/canvas';
 
 test.beforeEach(async ({ page }) => { await page.routeWebSocket('wss://rf.postoccupancy.com', () => {}); });
 
@@ -8,6 +9,11 @@ test('lesson metadata and sketch links round trip safely', () => {
   const changed={...baseParameters,frequency:220,mode:'pressure' as const,layers:5};
   expect(decodeSketch(encodeSketch(changed))).toMatchObject({frequency:220,mode:'pressure',layers:5});
   expect(decodeSketch('not-valid')).toEqual({});
+});
+
+test('palette lookup survives non-finite and incomplete analysis values', () => {
+  expect(colorAt([[5,9,25],[255,225,135]], Number.NaN)).toEqual([5,9,25]);
+  expect(colorAt([], Number.POSITIVE_INFINITY)).toEqual([0,0,0]);
 });
 
 test('lesson routes expose configured controls and preserve course state', async ({page}) => {
@@ -29,6 +35,15 @@ test('course navigation expands to all lessons and malformed shared state is har
   await expect(nav.getByRole('link',{name:'Audio Processing'})).toHaveAttribute('aria-current','page');
   await expect(nav.getByRole('link',{name:'Interference Patterns'})).toBeVisible();
   await expect(page.getByLabel('stripes audio visualization')).toBeVisible();
+});
+
+test('invalid persisted controls cannot crash the animation palette', async ({page}) => {
+  const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+  await page.addInitScript(()=>sessionStorage.setItem('dsp-for-artists:v1',JSON.stringify({layers:Number.NaN,palette:'missing',rmsPulseDepth:'loud'})));
+  await page.goto('/lab/dsp-for-artists/interference-patterns');
+  await expect(page.getByLabel('crest audio visualization')).toBeVisible();
+  await page.waitForTimeout(250);
+  expect(errors).toEqual([]);
 });
 
 test('presentation receives state over its session-specific channel', async ({page}) => {
