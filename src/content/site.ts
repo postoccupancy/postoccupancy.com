@@ -2,6 +2,7 @@ export interface SitePage {
   title: string;
   href: string;
   description: string;
+  children?: SitePage[];
 }
 
 export interface NavigationGroup {
@@ -38,13 +39,17 @@ export const groups: NavigationGroup[] = [
   },
   {
     title: 'Lab', id: 'lab', items: [
-      { title: 'DSP for Artists', href: '/lab/dsp-for-artists', description: 'Sequential, interactive material exploring digital signal processing for artists.' },
+      { title: 'DSP for Artists', href: '/lab/dsp-for-artists', description: 'Sequential, interactive material exploring digital signal processing for artists.', children: [
+        { title: 'Audio Processing', href: '/lab/dsp-for-artists/audio-processing', description: 'Lesson 1: audio analysis and time-frequency views.' },
+        { title: 'Interference Patterns', href: '/lab/dsp-for-artists/interference-patterns', description: 'Lesson 2: traveling waves and interference.' },
+        { title: 'Make Some Art', href: '/lab/dsp-for-artists/make-some-art', description: 'Lesson 3: a complete audiovisual instrument.' },
+      ] },
       { title: 'Notes', href: '/lab/notes', description: 'Longer-form writing about the work, its processes, and the ideas behind it.' },
     ],
   },
 ];
 
-export const pages = groups.flatMap((group) => group.items);
+export const pages = groups.flatMap((group) => group.items.flatMap((page) => [page, ...(page.children ?? [])]));
 
 export function getPage(href: string): SitePage {
   const page = pages.find((page) => page.href === href);

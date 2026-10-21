@@ -217,6 +217,14 @@ The current instrument labels are Resident Frequency, Pattern Party, and Weather
 - Rail typography, muted text, button weight, and border treatment intentionally match the left navigation. Keep controls restrained rather than restoring the original Moiré page’s larger Courier styling.
 - **Presentation** opens `/instruments/processing-sketches/presentation?session=<uuid>`. Each invocation creates a new UUID and `BroadcastChannel` named `pattern-party:<uuid>`, so multiple Pattern Party controller/presentation pairs do not share updates. The controller sends its complete current mode, source selection, parameter, color, and layer state immediately, responds again when the presentation announces readiness, and broadcasts every later control-state change. The presentation route bypasses `DocsShell` and contains only the p5 canvas; it does not create a router connection, publish derived signals, request MIDI, or affect Electric Sea.
 
+## DSP for Artists workshop (2026-10-20)
+
+- `/lab/dsp-for-artists` remains the prose course landing page and links to three viewport lessons: Audio Processing, Interference Patterns, and Make Some Art. DSP for Artists is an expandable nested item in the Lab navigation.
+- The lessons share one session-persisted, serializable parameter model through their route layout. Each lesson applies declarative defaults only on its first visit in the browser session; explicit lesson/all resets remain available. Share links contain validated non-default controls in a `sketch` query parameter and never include microphone state or permissions.
+- The responsive workspace keeps the canvas visible, uses independently scrolling instructions and controls on desktop, and moves controls into a MUI drawer on narrow screens. One course audio owner provides two oscillator tones or an explicitly enabled microphone; navigation cleanup stops tracks, oscillators, and the AudioContext.
+- The adapted workshop renderer retains FFT/CWT Raw and Relative analysis, stripes, rings, crest overlay, signed pressure sum, FFT/CWT history, named FFT and plane-wave blend semantics, geometry, palettes, and RMS controls. RMS and color pulse depths default to 2; plane-wave envelope controls are omitted.
+- Presentation opens `/lab/dsp-for-artists/presentation?session=<uuid>`. A session-specific `BroadcastChannel` sends validated parameter snapshots and live analysis frames; the presentation creates no AudioContext and requests no microphone permission.
+
 ## Microphone Visualizer integration
 
 - `/interfaces/microphone-visualizer` adapts `signal-router/mic/index.html`, reusing the original p5 waveform/spectrum/spectrogram views and Web Audio analysis. p5 is pinned to the source sketch’s 1.9.0 and bundled locally, not loaded from a CDN. It is lazy-imported after client mounting because p5 requires browser globals.

@@ -16,7 +16,7 @@ test('all named routes render their title, breadcrumbs, and selected navigation'
     const nav = page.getByRole('navigation', { name: 'Main navigation' });
     const breadcrumb = page.getByRole('navigation', { name: 'Breadcrumb', exact: true });
     await expect(nav.getByRole('link', { name: entry.title, exact: true })).toHaveAttribute('aria-current', 'page');
-    if (entry.href === '/instruments/processing-sketches') {
+    if (entry.href === '/instruments/processing-sketches' || entry.href.startsWith('/lab/dsp-for-artists/')) {
       await expect(breadcrumb).toHaveCount(0);
       continue;
     }

@@ -17,25 +17,12 @@ function PageLink({ page, pathname, onNavigate }: {
   onNavigate: () => void;
 }) {
   const active = pathname === page.href;
+  const descendantActive = page.children?.some((child) => child.href === pathname) ?? false;
+  const [childrenOpen, setChildrenOpen] = useState(active || descendantActive);
   return (
     <Box component="li" sx={{ listStyle: 'none' }}>
-      <ListItemButton
-        component={NextLink}
-        href={page.href}
-        onClick={onNavigate}
-        selected={active}
-        aria-current={active ? 'page' : undefined}
-        sx={{
-          borderRadius: 1, minHeight: 36, py: 0.75, px: 1.5,
-          pl: 2.75,
-          fontSize: 13, lineHeight: 1.6, fontWeight: active ? 600 : 400,
-          color: active ? 'primary.main' : 'text.secondary',
-          '&.Mui-selected': { bgcolor: 'rgba(54, 91, 76, 0.07)' },
-          '&.Mui-selected:hover': { bgcolor: 'rgba(54, 91, 76, 0.11)' },
-        }}
-      >
-        {page.title}
-      </ListItemButton>
+      <Box sx={{display:'flex',alignItems:'center'}}><ListItemButton component={NextLink} href={page.href} onClick={onNavigate} selected={active} aria-current={active ? 'page' : undefined} sx={{borderRadius:1,minHeight:36,py:.75,px:1.5,pl:2.75,fontSize:13,lineHeight:1.6,fontWeight:active?600:400,color:active?'primary.main':'text.secondary','&.Mui-selected':{bgcolor:'rgba(54, 91, 76, 0.07)'},'&.Mui-selected:hover':{bgcolor:'rgba(54, 91, 76, 0.11)'}}}>{page.title}</ListItemButton>{page.children&&<ListItemButton component="button" aria-label={`${childrenOpen?'Collapse':'Expand'} ${page.title}`} aria-expanded={childrenOpen} onClick={()=>setChildrenOpen(value=>!value)} sx={{minWidth:34,maxWidth:34,p:.5,borderRadius:1}}>{childrenOpen?<ExpandMore sx={{fontSize:17}}/>:<ChevronRight sx={{fontSize:17}}/>}</ListItemButton>}</Box>
+      {page.children&&<Collapse in={childrenOpen||descendantActive} timeout={0}><List disablePadding>{page.children.map(child=><Box component="li" key={child.href} sx={{listStyle:'none'}}><ListItemButton component={NextLink} href={child.href} onClick={onNavigate} selected={pathname===child.href} aria-current={pathname===child.href?'page':undefined} sx={{pl:4.5,py:.6,minHeight:32,fontSize:12.5,color:pathname===child.href?'primary.main':'text.secondary'}}>{child.title}</ListItemButton></Box>)}</List></Collapse>}
     </Box>
   );
 }
@@ -49,7 +36,7 @@ function Section({ group, pathname, onNavigate }: {
   const [state, setState] = useState({ pathname, open: true });
   // Reveal the active section when arriving via history or an in-content link.
   if (state.pathname !== pathname) {
-    setState({ pathname, open: group.items.some((page) => page.href === pathname) || state.open });
+    setState({ pathname, open: group.items.some((page) => page.href === pathname || page.children?.some((child) => child.href === pathname)) || state.open });
   }
 
   return (

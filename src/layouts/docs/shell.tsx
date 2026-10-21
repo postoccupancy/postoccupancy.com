@@ -27,7 +27,7 @@ export function DocsShell({ children }: { children: ReactNode }) {
   const opener = useRef<HTMLButtonElement>(null);
   const closer = useRef<HTMLButtonElement>(null);
 
-  if (pathname === '/instruments/processing-sketches/presentation') return <>{children}</>;
+  if (pathname === '/instruments/processing-sketches/presentation' || pathname === '/lab/dsp-for-artists/presentation') return <>{children}</>;
 
   function collapse() {
     setExpanded(false);
