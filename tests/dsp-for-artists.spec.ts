@@ -32,6 +32,7 @@ test('lesson routes expose configured controls and preserve course state', async
   await page.getByRole('link',{name:'Next'}).click();
   await expect(page).toHaveURL('/lab/dsp-for-artists/interference-patterns');
   await expect(page.locator('[data-control-group=layers]')).toBeVisible();
+  await expect(page.getByRole('slider',{name:'Layers'})).toHaveAttribute('min','1');
   const plane=page.frameLocator('iframe[title="plane source sketch"]');
   await expect(plane.locator('canvas')).toBeVisible();
   await expect(plane.locator('select').first()).toHaveValue('crests');
