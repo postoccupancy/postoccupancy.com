@@ -40,6 +40,28 @@ test('lesson routes expose configured controls and preserve course state', async
   await expect(page.getByRole('slider',{name:'Tone 2 frequency (Hz)'})).toBeVisible();
 });
 
+test('source adapters update in place and keep legacy controls out of view', async ({page}) => {
+  await page.goto('/lab/dsp-for-artists/audio-processing');
+  const fftFrame=page.locator('iframe[title="fft source sketch"]');
+  const fft=fftFrame.contentFrame();
+  await expect(fft.locator('canvas')).toBeVisible();
+  await expect(fft.locator('button').first()).toBeHidden();
+  await fft.locator('body').evaluate(()=>{(window as typeof window&{adapterToken?:string}).adapterToken='stable'});
+  await page.getByRole('slider',{name:'Tone 1 frequency (Hz)'}).fill('330');
+  await expect(fft.locator('label').filter({hasText:'Fundamental frequency'}).locator('input')).toHaveValue('330');
+  expect(await fft.locator('body').evaluate(()=>(window as typeof window&{adapterToken?:string}).adapterToken)).toBe('stable');
+
+  await page.goto('/lab/dsp-for-artists/interference-patterns');
+  const plane=page.frameLocator('iframe[title="plane source sketch"]');
+  await expect(plane.locator('canvas')).toBeVisible();
+  await expect(plane.locator('button').first()).toBeHidden();
+  await page.locator('[data-control-group=visualization] [role="combobox"]').click();
+  await page.getByRole('option',{name:'Pressure sum'}).click();
+  await expect(plane.locator('select').first()).toHaveValue('pressure');
+  await page.getByRole('slider',{name:'Phase (degrees)'}).fill('90');
+  await expect(plane.locator('input[type="range"]').nth(11)).toHaveValue('90');
+});
+
 test('course navigation expands to all lessons and malformed shared state is harmless', async ({page}) => {
   await page.goto('/lab/dsp-for-artists/audio-processing?sketch=broken');
   const nav=page.getByRole('navigation',{name:'Main navigation'});
@@ -63,7 +85,7 @@ test('presentation receives state over its session-specific channel', async ({pa
   await page.getByRole('button',{name:'Open presentation window'}).click();
   const presentation=await popupPromise;
   await expect(presentation).toHaveURL(/\/lab\/dsp-for-artists\/presentation\?session=/);
-  await expect(presentation.getByAltText('rings live presentation')).toBeVisible();
+  await expect(presentation.getByTitle('fft source sketch')).toBeVisible();
   await expect(presentation.getByText('Waiting for the tutorial window…')).toHaveCount(0);
   await presentation.close();
 });
