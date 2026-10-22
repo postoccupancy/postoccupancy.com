@@ -30,7 +30,8 @@ export interface DspAnalysisFrame {
   fftBandsDb: Float32Array<ArrayBuffer>;
   cwtBandsDb?: Float32Array<ArrayBuffer>;
   waveform: Float32Array<ArrayBuffer>;
-  microphoneWaveform?: Float32Array<ArrayBuffer>;
+  /** New, contiguous microphone samples captured since the preceding frame. */
+  microphoneSamples?: Float32Array<ArrayBuffer>;
   rms: number;
 }
 
@@ -91,6 +92,9 @@ export class DspEngine implements DspEngineContract {
   private microphoneFilter: BiquadFilterNode | null = null;
   private microphoneGain: GainNode | null = null;
   private microphoneAnalyser: AnalyserNode | null = null;
+  private microphoneCapture: AudioWorkletNode | null = null;
+  private microphoneCaptureSink: GainNode | null = null;
+  private microphoneBlocks: Float32Array[] = [];
   private microphoneConnected = false;
   private microphoneMonitorConnected = false;
   private microphoneEnabledRuntime = false;
@@ -161,6 +165,7 @@ export class DspEngine implements DspEngineContract {
         this.microphoneSource.connect(this.microphoneFilter);
         this.microphoneFilter.connect(this.microphoneGain);
         this.microphoneGain.connect(this.microphoneAnalyser);
+        await this.installMicrophoneCapture();
       }
       await this.context!.resume();
       this.syncInputRouting();
@@ -187,6 +192,12 @@ export class DspEngine implements DspEngineContract {
     this.microphoneFilter = null;
     this.microphoneGain = null;
     this.microphoneAnalyser = null;
+    if(this.microphoneCapture)this.microphoneCapture.port.onmessage=null;
+    this.microphoneCapture?.disconnect();
+    this.microphoneCaptureSink?.disconnect();
+    this.microphoneCapture = null;
+    this.microphoneCaptureSink = null;
+    this.microphoneBlocks = [];
     this.status = { ...this.status, source: this.sourceStatus() };
   }
 
@@ -322,8 +333,9 @@ export class DspEngine implements DspEngineContract {
     this.analyser.getFloatTimeDomainData(this.waveformData);
     const fftBinsDb = this.fftData.slice();
     const waveform = this.waveformData.slice();
-    let microphoneWaveform:Float32Array<ArrayBuffer>|undefined;
-    if(this.microphoneEnabledRuntime&&this.microphoneAnalyser){const samples=new Float32Array(this.microphoneAnalyser.fftSize);this.microphoneAnalyser.getFloatTimeDomainData(samples);microphoneWaveform=samples;}
+    let microphoneSamples:Float32Array<ArrayBuffer>|undefined;
+    if(this.microphoneEnabledRuntime&&this.microphoneBlocks.length){const length=this.microphoneBlocks.reduce((sum,block)=>sum+block.length,0),samples=new Float32Array(length);let offset=0;for(const block of this.microphoneBlocks){samples.set(block,offset);offset+=block.length;}this.microphoneBlocks=[];microphoneSamples=samples;}
+    else if(this.microphoneEnabledRuntime&&this.microphoneAnalyser){const count=Math.min(this.microphoneAnalyser.fftSize,Math.round(this.context.sampleRate*DSP_ANALYSIS_INTERVAL_MS/1000)),window=new Float32Array(this.microphoneAnalyser.fftSize);this.microphoneAnalyser.getFloatTimeDomainData(window);microphoneSamples=window.slice(window.length-count);}
     const fftBandsDb = this.fftBands(fftBinsDb);
     let cwtBandsDb: Float32Array<ArrayBuffer> | undefined;
     if (this.parameters.analysis === 'cwt') cwtBandsDb = this.cwtBands();
@@ -338,11 +350,24 @@ export class DspEngine implements DspEngineContract {
       fftBandsDb,
       cwtBandsDb,
       waveform,
-      microphoneWaveform,
+      microphoneSamples,
       rms: Math.sqrt(energy / Math.max(1, waveform.length)),
     };
     this.latestFrame = frame;
     for (const listener of this.listeners) listener(frame);
+  }
+
+  private async installMicrophoneCapture() {
+    if(!this.context||!this.microphoneGain||!('audioWorklet' in this.context)||typeof AudioWorkletNode==='undefined')return;
+    try{
+      await this.context.audioWorklet.addModule('/dsp-for-artists/microphone-capture-worklet.js');
+      if(!this.microphoneGain)return;
+      const capture=new AudioWorkletNode(this.context,'dsp-microphone-capture',{numberOfInputs:1,numberOfOutputs:1,outputChannelCount:[1]});
+      const sink=this.context.createGain();sink.gain.value=0;
+      capture.port.onmessage=event=>{const value=event.data;if(value instanceof Float32Array&&value.length)this.microphoneBlocks.push(value);};
+      this.microphoneGain.connect(capture);capture.connect(sink);sink.connect(this.context.destination);
+      this.microphoneCapture=capture;this.microphoneCaptureSink=sink;
+    }catch{ /* The analyser suffix remains a bounded compatibility fallback. */ }
   }
 
   private fftBands(bins: Float32Array<ArrayBuffer>) {
