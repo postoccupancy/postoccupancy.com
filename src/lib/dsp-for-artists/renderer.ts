@@ -25,7 +25,7 @@ export function colorAt(stops: number[][], value: number) {
 }
 
 function hexRgb(value: string) { return [1,3,5].map(offset => parseInt(value.slice(offset, offset + 2), 16)); }
-function visualSources(parameters:DspParameters){const sources=parameters.oscillators.filter(item=>item.visible).map(item=>({direction:item.direction,phase:item.phase,band:item.band,frequency:item.frequency}));if(parameters.microphone.enabled&&parameters.microphone.visible)sources.push({direction:parameters.microphone.direction,phase:0,band:'raw',frequency:0});return sources;}
+export function visualSources(parameters:DspParameters){const sources=parameters.oscillators.filter(item=>item.playing).map(item=>({direction:item.direction,phase:item.phase,band:item.band,frequency:item.frequency}));if(parameters.microphone.enabled)sources.push({direction:parameters.microphone.direction,phase:0,band:'raw' as const,frequency:0});return sources;}
 
 class SpectralState {
   private shown = new Float32Array(DSP_BANDS).fill(-120);

@@ -43,6 +43,7 @@ export interface DspEngineContract {
   configure(parameters: DspParameters, oscillators?: DspOscillatorConfig[]): void;
   start(): Promise<void>;
   useMicrophone(): Promise<void>;
+  disableMicrophone(): void;
   pause(paused: boolean): Promise<void>;
   subscribe(listener: (frame: DspAnalysisFrame) => void): () => void;
   subscribeStatus(listener: (status: DspEngineStatus) => void): () => void;
@@ -116,6 +117,7 @@ export class DspEngine implements DspEngineContract {
     const cwtChanged = parameters.cwtCycles !== this.parameters.cwtCycles;
     this.parameters = parameters;
     this.oscillatorConfigs = oscillators;
+    if (!parameters.microphone.enabled) this.disableMicrophone();
     this.status = { ...this.status, source: this.sourceStatus() };
     if (!this.context) return;
     if (fftChanged && this.analyser) {
@@ -163,6 +165,23 @@ export class DspEngine implements DspEngineContract {
       this.setStatus('error', `Microphone unavailable: ${error instanceof Error ? error.message : 'permission denied'}`);
       throw error;
     }
+  }
+
+  disableMicrophone() {
+    this.microphoneEnabledRuntime = false;
+    if (this.microphoneConnected) this.microphoneGain?.disconnect(this.analysisBus!);
+    if (this.microphoneMonitorConnected) this.microphoneGain?.disconnect(this.monitorBus!);
+    this.microphoneConnected = false;
+    this.microphoneMonitorConnected = false;
+    this.microphoneSource?.disconnect();
+    this.microphoneFilter?.disconnect();
+    this.microphoneGain?.disconnect();
+    this.microphoneStream?.getTracks().forEach(track => track.stop());
+    this.microphoneStream = null;
+    this.microphoneSource = null;
+    this.microphoneFilter = null;
+    this.microphoneGain = null;
+    this.status = { ...this.status, source: this.sourceStatus() };
   }
 
   async pause(paused: boolean) {
@@ -234,7 +253,7 @@ export class DspEngine implements DspEngineContract {
 
   private syncVoices() {
     if (!this.context || !this.analysisBus || !this.monitorBus) return;
-    const wanted = new Set(this.oscillatorConfigs.map(config => config.id));
+    const wanted = new Set(this.oscillatorConfigs.filter(config => config.generating).map(config => config.id));
     for (const [id, voice] of this.voices) {
       if (wanted.has(id)) continue;
       try { voice.oscillator.stop(); } catch {}
@@ -244,6 +263,7 @@ export class DspEngine implements DspEngineContract {
       this.voices.delete(id);
     }
     for (const config of this.oscillatorConfigs) {
+      if (!config.generating) continue;
       let voice = this.voices.get(config.id);
       if (!voice) {
         const oscillator = this.context.createOscillator();
