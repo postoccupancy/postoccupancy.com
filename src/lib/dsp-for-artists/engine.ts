@@ -35,7 +35,7 @@ export interface DspAnalysisFrame {
 
 export interface DspEngineStatus {
   state: 'idle' | 'running' | 'paused' | 'error';
-  source: DspParameters['source'];
+  source: 'oscillator' | 'microphone' | 'mixed';
   message: string;
 }
 
@@ -72,17 +72,7 @@ const mediaConstraints: MediaStreamConstraints = {
 };
 
 export function oscillatorsFromParameters(parameters: DspParameters): DspOscillatorConfig[] {
-  return [parameters.frequency, parameters.secondFrequency].map((frequency, index) => ({
-    id: `oscillator-${index + 1}`,
-    frequency,
-    waveform: parameters.oscillatorWave,
-    level: parameters.oscillatorVolume / 100 * 0.5,
-    cutoff: parameters.oscillatorCutoff,
-    q: parameters.oscillatorQ,
-    generating: true,
-    analyzing: parameters.source === 'oscillator',
-    audible: parameters.monitor,
-  }));
+  return parameters.oscillators.map(item=>({id:item.id,frequency:item.frequency,waveform:item.waveform,level:Math.pow(10,item.levelDb/20)*.35,cutoff:item.cutoff,q:.707,generating:item.playing,analyzing:item.playing,audible:item.playing&&!parameters.monitorMuted}));
 }
 
 export class DspEngine implements DspEngineContract {
@@ -96,13 +86,17 @@ export class DspEngine implements DspEngineContract {
   private voices = new Map<string, OscillatorVoice>();
   private microphoneStream: MediaStream | null = null;
   private microphoneSource: MediaStreamAudioSourceNode | null = null;
+  private microphoneFilter: BiquadFilterNode | null = null;
+  private microphoneGain: GainNode | null = null;
   private microphoneConnected = false;
+  private microphoneMonitorConnected = false;
+  private microphoneEnabledRuntime = false;
   private timer: ReturnType<typeof setInterval> | null = null;
   private sequence = 0;
   private latestFrame: DspAnalysisFrame | null = null;
   private listeners = new Set<(frame: DspAnalysisFrame) => void>();
   private statusListeners = new Set<(status: DspEngineStatus) => void>();
-  private status: DspEngineStatus = { state: 'idle', source: 'oscillator', message: 'Audio off' };
+  private status: DspEngineStatus = { state: 'idle', source: 'oscillator', message: 'Waiting for audio permission' };
   private fftData = new Float32Array(0);
   private waveformData = new Float32Array(0);
   private cwtData = new Float32Array(0);
@@ -113,8 +107,8 @@ export class DspEngine implements DspEngineContract {
 
   constructor(parameters: DspParameters) {
     this.parameters = parameters;
+    this.microphoneEnabledRuntime = parameters.microphone.enabled;
     this.oscillatorConfigs = oscillatorsFromParameters(parameters);
-    this.status.source = parameters.source;
   }
 
   configure(parameters: DspParameters, oscillators = oscillatorsFromParameters(parameters)) {
@@ -122,7 +116,7 @@ export class DspEngine implements DspEngineContract {
     const cwtChanged = parameters.cwtCycles !== this.parameters.cwtCycles;
     this.parameters = parameters;
     this.oscillatorConfigs = oscillators;
-    this.status = { ...this.status, source: parameters.source };
+    this.status = { ...this.status, source: this.sourceStatus() };
     if (!this.context) return;
     if (fftChanged && this.analyser) {
       this.analyser.fftSize = parameters.fftSize;
@@ -131,6 +125,7 @@ export class DspEngine implements DspEngineContract {
     if (cwtChanged) this.cwtKernels = null;
     this.syncVoices();
     this.syncInputRouting();
+    if(this.status.state==='running')this.setStatus('running',this.sourceMessage());
   }
 
   async start() {
@@ -140,7 +135,7 @@ export class DspEngine implements DspEngineContract {
       this.syncVoices();
       this.syncInputRouting();
       if (!this.timer) this.timer = setInterval(() => this.analyze(), DSP_ANALYSIS_INTERVAL_MS);
-      this.setStatus('running', this.parameters.source === 'microphone' ? 'Microphone analyzing' : 'Oscillators analyzing');
+      this.setStatus('running', this.sourceMessage());
     } catch (error) {
       this.setStatus('error', `Audio unavailable: ${error instanceof Error ? error.message : 'unknown error'}`);
       throw error;
@@ -150,15 +145,20 @@ export class DspEngine implements DspEngineContract {
   async useMicrophone() {
     try {
       this.ensureGraph();
+      this.microphoneEnabledRuntime = true;
       if (!this.microphoneStream) {
         this.microphoneStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
         this.microphoneSource = this.context!.createMediaStreamSource(this.microphoneStream);
+        this.microphoneFilter = this.context!.createBiquadFilter();
+        this.microphoneFilter.type = 'lowpass';
+        this.microphoneGain = this.context!.createGain();
+        this.microphoneSource.connect(this.microphoneFilter);
+        this.microphoneFilter.connect(this.microphoneGain);
       }
       await this.context!.resume();
-      this.parameters = { ...this.parameters, source: 'microphone' };
       this.syncInputRouting();
       if (!this.timer) this.timer = setInterval(() => this.analyze(), DSP_ANALYSIS_INTERVAL_MS);
-      this.setStatus('running', 'Microphone analyzing');
+      this.setStatus('running', this.sourceMessage());
     } catch (error) {
       this.setStatus('error', `Microphone unavailable: ${error instanceof Error ? error.message : 'permission denied'}`);
       throw error;
@@ -172,7 +172,7 @@ export class DspEngine implements DspEngineContract {
       this.setStatus('paused', 'Audio paused');
     } else {
       await this.context.resume();
-      this.setStatus('running', this.parameters.source === 'microphone' ? 'Microphone analyzing' : 'Oscillators analyzing');
+      this.setStatus('running', this.sourceMessage());
     }
   }
 
@@ -262,7 +262,7 @@ export class DspEngine implements DspEngineContract {
       voice.filter.frequency.setTargetAtTime(config.cutoff, now, 0.01);
       voice.filter.Q.setTargetAtTime(config.q, now, 0.01);
       voice.gain.gain.setTargetAtTime(config.generating ? config.level : 0, now, 0.01);
-      const analyze = config.analyzing && this.parameters.source === 'oscillator';
+      const analyze = config.analyzing;
       if (analyze !== voice.analysisConnected) {
         if (analyze) voice.gain.connect(this.analysisBus); else voice.gain.disconnect(this.analysisBus);
         voice.analysisConnected = analyze;
@@ -276,12 +276,15 @@ export class DspEngine implements DspEngineContract {
 
   private syncInputRouting() {
     if (!this.analysisBus) return;
-    const microphoneShouldAnalyze = this.parameters.source === 'microphone' && !!this.microphoneSource;
+    if(this.microphoneFilter&&this.microphoneGain){const now=this.context!.currentTime;this.microphoneFilter.frequency.setTargetAtTime(this.parameters.microphone.cutoff,now,.01);this.microphoneGain.gain.setTargetAtTime(Math.pow(10,this.parameters.microphone.gainDb/20),now,.01);}
+    const microphoneShouldAnalyze = this.microphoneEnabledRuntime && this.parameters.microphone.analyzing && !!this.microphoneGain;
     if (microphoneShouldAnalyze !== this.microphoneConnected) {
-      if (microphoneShouldAnalyze) this.microphoneSource!.connect(this.analysisBus);
-      else this.microphoneSource?.disconnect(this.analysisBus);
+      if (microphoneShouldAnalyze) this.microphoneGain!.connect(this.analysisBus);
+      else this.microphoneGain?.disconnect(this.analysisBus);
       this.microphoneConnected = microphoneShouldAnalyze;
     }
+    const microphoneShouldMonitor=this.microphoneEnabledRuntime&&this.parameters.microphone.monitoring&&!this.parameters.monitorMuted&&!!this.microphoneGain;
+    if(microphoneShouldMonitor!==this.microphoneMonitorConnected){if(microphoneShouldMonitor)this.microphoneGain!.connect(this.monitorBus!);else this.microphoneGain?.disconnect(this.monitorBus!);this.microphoneMonitorConnected=microphoneShouldMonitor;}
     this.syncVoices();
   }
 
@@ -295,7 +298,7 @@ export class DspEngine implements DspEngineContract {
     const waveform = this.waveformData.slice();
     const fftBandsDb = this.fftBands(fftBinsDb);
     let cwtBandsDb: Float32Array<ArrayBuffer> | undefined;
-    if (this.parameters.analysis === 'cwt' || this.parameters.mode === 'scalogram') cwtBandsDb = this.cwtBands();
+    if (this.parameters.analysis === 'cwt') cwtBandsDb = this.cwtBands();
     let energy = 0;
     for (const sample of waveform) energy += sample * sample;
     const frame: DspAnalysisFrame = {
@@ -380,7 +383,10 @@ export class DspEngine implements DspEngineContract {
   }
 
   private setStatus(state: DspEngineStatus['state'], message: string) {
-    this.status = { state, source: this.parameters.source, message };
+    this.status = { state, source: this.sourceStatus(), message };
     for (const listener of this.statusListeners) listener(this.status);
   }
+
+  private sourceStatus():DspEngineStatus['source']{const oscillators=this.oscillatorConfigs.some(config=>config.generating&&config.analyzing),microphone=this.microphoneEnabledRuntime&&this.parameters.microphone.analyzing;if(oscillators&&microphone)return'mixed';return microphone?'microphone':'oscillator';}
+  private sourceMessage(){const source=this.sourceStatus();return source==='mixed'?'Oscillators and microphone analyzing':source==='microphone'?'Microphone analyzing':'Oscillators analyzing';}
 }

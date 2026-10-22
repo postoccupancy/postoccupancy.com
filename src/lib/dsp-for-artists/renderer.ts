@@ -1,4 +1,4 @@
-import type { DspParameters } from './course';
+import type { BandFilter, DspParameters } from './course';
 import { DSP_BANDS, DSP_MAX_HZ, DSP_MIN_HZ, dspBandFrequency, type DspAnalysisFrame } from './engine';
 
 export interface DspRendererContract {
@@ -25,6 +25,7 @@ export function colorAt(stops: number[][], value: number) {
 }
 
 function hexRgb(value: string) { return [1,3,5].map(offset => parseInt(value.slice(offset, offset + 2), 16)); }
+function visualSources(parameters:DspParameters){const sources=parameters.oscillators.filter(item=>item.visible).map(item=>({direction:item.direction,phase:item.phase,band:item.band,frequency:item.frequency}));if(parameters.microphone.enabled)sources.push({direction:parameters.microphone.direction,phase:0,band:'raw',frequency:0});return sources;}
 
 class SpectralState {
   private shown = new Float32Array(DSP_BANDS).fill(-120);
@@ -59,7 +60,7 @@ class SpectralState {
     } else this.adaptiveGain = 0;
   }
 
-  values(channel: DspParameters['band'], parameters: DspParameters) {
+  values(channel: BandFilter, parameters: DspParameters) {
     const result = new Float32Array(DSP_BANDS);
     let relative: Float32Array | null = null;
     if (parameters.spectrum === 'relative') {
@@ -120,7 +121,7 @@ class PlaneState {
   }
 
   push(frame:DspAnalysisFrame, parameters:DspParameters) {
-    this.ensureBands(parameters.layers);
+    this.ensureBands(Math.max(1,visualSources(parameters).length));
     if(frame.sequence===this.lastSequence)return;
     this.lastSequence=frame.sequence;
     const dt=this.previous?Math.min(.1,Math.max(.001,(frame.timestamp-this.previous)/1000)):.05;this.previous=frame.timestamp;this.elapsed+=dt;
@@ -139,7 +140,7 @@ class PlaneState {
   }
 
   render(target:CanvasRenderingContext2D, width:number, height:number, parameters:DspParameters) {
-    this.ensureBands(parameters.layers);const size=this.size,totalHeight=this.top+size,off=this.canvas,ctx=this.context;
+    this.ensureBands(Math.max(1,visualSources(parameters).length));const size=this.size,totalHeight=this.top+size,off=this.canvas,ctx=this.context;
     ctx.fillStyle='#f6f6f6';ctx.fillRect(0,0,size,70);ctx.fillStyle='#fff';ctx.fillRect(0,70,size,totalHeight-70);
     const states=this.states(parameters);ctx.strokeStyle='#d2d2d2';ctx.beginPath();ctx.moveTo(0,35);ctx.lineTo(size,35);ctx.stroke();ctx.strokeStyle='#000';ctx.lineWidth=2;ctx.beginPath();for(let x=0;x<=size;x++){const pressure=this.pressure(x,size/2,states),y=35-pressure*12;if(x)ctx.lineTo(x,y);else ctx.moveTo(x,y);}ctx.stroke();
     if(!this.imageData)this.imageData=ctx.createImageData(size,size);const pixels=this.imageData.data,palette=parameters.palette,screen=palette!=='mono'&&parameters.blend==='screen',pulse=this.pulseEnvelope*parameters.rmsPulseDepth,colorPulse=parameters.rmsLuminosity?this.pulseEnvelope*parameters.colorPulseDepth:0;
@@ -150,7 +151,7 @@ class PlaneState {
   }
 
   private historyAt(band:PlaneBand,when:number){const history=band.history;if(!history.length||when<history[0].t)return{amp:0,phase:0};if(when>=history[history.length-1].t)return history[history.length-1];let low=0,high=history.length-1;while(high-low>1){const middle=(low+high)>>1;if(history[middle].t<=when)low=middle;else high=middle;}const a=history[low],b=history[high],u=(when-a.t)/(b.t-a.t);return{amp:a.amp+(b.amp-a.amp)*u,phase:a.phase+(b.phase-a.phase)*u};}
-  private states(parameters:DspParameters){const corner=this.size*Math.SQRT2/2;return this.bands.map((band,index)=>{const step=parameters.angleDistribution==='even'?360/this.bands.length:parameters.angleStep,angle=(parameters.direction+index*step)*Math.PI/180,dx=Math.cos(angle),dy=Math.sin(angle),lookup=Array.from({length:Math.ceil(2*this.size*Math.SQRT2)+5},(_,distance)=>this.historyAt(band,this.elapsed-distance/24));return{band,dx,dy,minProjection:-corner,userPhase:parameters.phase*Math.PI/180,lookup};});}
+  private states(parameters:DspParameters){const corner=this.size*Math.SQRT2/2,visible=visualSources(parameters);return this.bands.map((band,index)=>{const oscillator=visible[index],step=parameters.angleDistribution==='even'?360/this.bands.length:parameters.angleStep,angle=(oscillator?.direction??index*step)*Math.PI/180,dx=Math.cos(angle),dy=Math.sin(angle),lookup=Array.from({length:Math.ceil(2*this.size*Math.SQRT2)+5},(_,distance)=>this.historyAt(band,this.elapsed-distance/24));return{band,dx,dy,minProjection:-corner,userPhase:(oscillator?.phase??0)*Math.PI/180,lookup};});}
   private distance(x:number,y:number,state:ReturnType<PlaneState['states']>[number]){return clamp(state.dx*(x-this.size/2)+state.dy*(y-this.size/2)-state.minProjection,0,state.lookup.length-2);}
   private sample(x:number,y:number,state:ReturnType<PlaneState['states']>[number]){const distance=this.distance(x,y,state),index=Math.floor(distance),fraction=distance-index,a=state.lookup[index],b=state.lookup[index+1],amp=a.amp+(b.amp-a.amp)*fraction,phase=a.phase+(b.phase-a.phase)*fraction+state.userPhase;return{amp,phase,value:amp*Math.cos(phase)};}
   private pressure(x:number,y:number,states:ReturnType<PlaneState['states']>){let value=0;for(const state of states)value+=this.sample(x,y,state).value;return value;}
@@ -175,13 +176,13 @@ export class WorkshopRenderer implements DspRendererContract {
   setParameters(parameters:DspParameters){this.parameters=parameters;this.dirty=true;}
   pushFrame(frame:DspAnalysisFrame){this.frame=frame;this.spectral.update(frame,this.parameters);this.plane.push(frame,this.parameters);this.dirty=true;}
   resize(width:number,height:number,pixelRatio:number){this.width=Math.max(1,width);this.height=Math.max(1,height);this.pixelRatio=pixelRatio;if(this.canvas.width!==Math.round(width*pixelRatio)||this.canvas.height!==Math.round(height*pixelRatio)){this.canvas.width=Math.round(width*pixelRatio);this.canvas.height=Math.round(height*pixelRatio);this.context.setTransform(pixelRatio,0,0,pixelRatio,0,0);this.dirty=true;}}
-  render(now:number){if(!Number.isFinite(now)||!this.dirty)return;this.dirty=false;const p=this.parameters;this.context.fillStyle='#050919';this.context.fillRect(0,0,this.width,this.height);if(p.mode==='crest'||p.mode==='pressure'){this.plane.render(this.context,this.width,this.height,p);return;}if(p.mode==='spectrogram'||p.mode==='scalogram'){this.renderHistory();return;}this.renderSpectrum();}
+  render(now:number){if(!Number.isFinite(now)||!this.dirty)return;this.dirty=false;const p=this.parameters;this.context.fillStyle='#050919';this.context.fillRect(0,0,this.width,this.height);if(p.mode==='crest'||p.mode==='pressure'){this.plane.render(this.context,this.width,this.height,p);return;}if(p.mode==='timeFrequency'){this.renderHistory();return;}this.renderSpectrum();}
   destroy(){this.fftRaster.width=this.fftRaster.height=this.historyRaster.width=this.historyRaster.height=0;}
 
-  private renderSpectrum(){const p=this.parameters,relative=this.spectral.values('raw',p),channels:{[key:string]:Float32Array}={raw:relative,low:this.spectral.values('low',p),mid:this.spectral.values('mid',p),high:this.spectral.values('high',p)},size=570;if(!this.fftImage)this.fftImage=new ImageData(size,size);const data=this.fftImage.data,layers=Array.from({length:p.layers},(_,index)=>{const angle=(p.direction+index*(p.angleDistribution==='even'?360/p.layers:p.angleStep))*Math.PI/180,cos=Math.cos(angle),sin=Math.sin(angle),circle=p.layerLayout==='circle',offset=index-(p.layers-1)/2,channel=p.assignment==='all'?p.band:p.assignment==='cycle'?(['raw','low','mid','high'] as const)[index%4]:(['low','mid','high'] as const)[index%3];return{angle,cos,sin,x:(circle?p.layoutRadius*cos:offset*p.xSpacing)/size,y:(circle?p.layoutRadius*sin:offset*p.ySpacing)/size,channel,values:channels[channel]};});
+  private renderSpectrum(){const p=this.parameters,relative=this.spectral.values('raw',p),channels:{[key:string]:Float32Array}={raw:relative,low:this.spectral.values('low',p),mid:this.spectral.values('mid',p),high:this.spectral.values('high',p)},size=570;if(!this.fftImage)this.fftImage=new ImageData(size,size);const data=this.fftImage.data,visible=visualSources(p),layers=visible.map((oscillator,index)=>{const angle=oscillator.direction*Math.PI/180,cos=Math.cos(angle),sin=Math.sin(angle),circle=p.layerLayout==='circle',offset=index-(visible.length-1)/2,channel=oscillator.band;return{angle,cos,sin,x:(circle?p.layoutRadius*cos:offset*p.xSpacing)/size,y:(circle?p.layoutRadius*sin:offset*p.ySpacing)/size,channel,values:channels[channel]};});
     for(let y=0;y<size;y++){const cy=(y+.5)/size-.5;for(let x=0;x<size;x++){const cx=(x+.5)/size-.5;let product=1,sum=0,maximum=0;for(const layer of layers){let u;if(p.mode==='rings')u=clamp(Math.hypot(cx-layer.x,cy-layer.y)/(p.radialExtent/size));else{const projected=(cx-layer.x)*layer.cos+(cy-layer.y)*layer.sin,extent=.5*(Math.abs(layer.cos)+Math.abs(layer.sin));u=clamp((projected+extent)/(2*extent));}const range=layer.channel==='low'?[DSP_MIN_HZ,350]:layer.channel==='mid'?[350,1500]:layer.channel==='high'?[1500,DSP_MAX_HZ]:[DSP_MIN_HZ,DSP_MAX_HZ],frequency=p.frequencyAxis==='linear'?range[0]+(range[1]-range[0])*u:range[0]*Math.pow(range[1]/range[0],u),position=clamp(Math.log(frequency/DSP_MIN_HZ)/Math.log(DSP_MAX_HZ/DSP_MIN_HZ),0,1)*(DSP_BANDS-1),left=Math.floor(position),right=Math.min(DSP_BANDS-1,left+1),value=clamp(layer.values[left]+(layer.values[right]-layer.values[left])*(position-left));product*=value;sum+=value;maximum=Math.max(maximum,value);}const added=layers.length?sum/layers.length:0,multiplied=layers.length?Math.pow(product,1/layers.length):0,combined=p.blend==='add'?added:p.blend==='maximum'?maximum:p.blend==='blend'?added*(1-p.blendAmount)+multiplied*p.blendAmount:multiplied,color=colorAt(spectralStops,p.background+(1-p.background)*combined),offset=4*(y*size+x);data[offset]=color[0];data[offset+1]=color[1];data[offset+2]=color[2];data[offset+3]=255;}}
     if(this.fftRaster.width!==size)this.fftRaster.width=size;if(this.fftRaster.height!==size)this.fftRaster.height=size;const rasterContext=this.fftRaster.getContext('2d',{alpha:false})!;rasterContext.putImageData(this.fftImage,0,0);
-    if(p.harmonicMarkers&&p.mode==='stripes'&&layers.length===1){const layer=layers[0],range=layer.channel==='low'?[DSP_MIN_HZ,350]:layer.channel==='mid'?[350,1500]:layer.channel==='high'?[1500,DSP_MAX_HZ]:[DSP_MIN_HZ,DSP_MAX_HZ],extent=.5*(Math.abs(layer.cos)+Math.abs(layer.sin)),vx=-layer.sin,vy=layer.cos;rasterContext.save();rasterContext.strokeStyle='rgba(255,231,139,.55)';rasterContext.fillStyle='rgba(255,231,139,.85)';rasterContext.font='10px monospace';for(let harmonic=1;harmonic*p.frequency<=range[1]&&harmonic<=100;harmonic++){const frequency=harmonic*p.frequency;if(frequency<range[0])continue;const u=p.frequencyAxis==='linear'?(frequency-range[0])/(range[1]-range[0]):Math.log(frequency/range[0])/Math.log(range[1]/range[0]),projected=(2*u-1)*extent,cx=layer.x+layer.cos*projected,cy=layer.y+layer.sin*projected;rasterContext.beginPath();rasterContext.moveTo(size*(.5+cx-vx*2),size*(.5+cy-vy*2));rasterContext.lineTo(size*(.5+cx+vx*2),size*(.5+cy+vy*2));rasterContext.stroke();if(harmonic<=12)rasterContext.fillText(String(harmonic),size*(.5+cx)+4,size*(.5+cy)+10);}rasterContext.restore();}
+    if(p.harmonicMarkers&&p.mode==='stripes'&&layers.length===1&&(visible[0]?.frequency??0)>0){const layer=layers[0],fundamental=visible[0].frequency,range=layer.channel==='low'?[DSP_MIN_HZ,350]:layer.channel==='mid'?[350,1500]:layer.channel==='high'?[1500,DSP_MAX_HZ]:[DSP_MIN_HZ,DSP_MAX_HZ],extent=.5*(Math.abs(layer.cos)+Math.abs(layer.sin)),vx=-layer.sin,vy=layer.cos;rasterContext.save();rasterContext.strokeStyle='rgba(255,231,139,.55)';rasterContext.fillStyle='rgba(255,231,139,.85)';rasterContext.font='10px monospace';for(let harmonic=1;harmonic*fundamental<=range[1]&&harmonic<=100;harmonic++){const frequency=harmonic*fundamental;if(frequency<range[0])continue;const u=p.frequencyAxis==='linear'?(frequency-range[0])/(range[1]-range[0]):Math.log(frequency/range[0])/Math.log(range[1]/range[0]),projected=(2*u-1)*extent,cx=layer.x+layer.cos*projected,cy=layer.y+layer.sin*projected;rasterContext.beginPath();rasterContext.moveTo(size*(.5+cx-vx*2),size*(.5+cy-vy*2));rasterContext.lineTo(size*(.5+cx+vx*2),size*(.5+cy+vy*2));rasterContext.stroke();if(harmonic<=12)rasterContext.fillText(String(harmonic),size*(.5+cx)+4,size*(.5+cy)+10);}rasterContext.restore();}
     this.context.imageSmoothingEnabled=true;this.context.drawImage(this.fftRaster,0,0,this.width,this.height);
   }
 

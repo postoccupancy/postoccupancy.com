@@ -1,74 +1,36 @@
 export const lessonSlugs = ['audio-processing', 'interference-patterns', 'make-some-art'] as const;
 export type LessonSlug = (typeof lessonSlugs)[number];
-export type ControlGroup = 'audio' | 'spectrum' | 'visualization' | 'layers' | 'geometry' | 'color' | 'rms';
-export type DspMode = 'stripes' | 'rings' | 'crest' | 'pressure' | 'spectrogram' | 'scalogram';
+export type DspMode = 'stripes' | 'rings' | 'timeFrequency' | 'crest' | 'pressure';
+export type BandFilter = 'raw' | 'low' | 'mid' | 'high';
 
+export interface DspOscillator { id:string;playing:boolean;visible:boolean;waveform:OscillatorType;frequency:number;levelDb:number;cutoff:number;direction:number;phase:number;band:BandFilter }
+export interface DspMicrophone { enabled:boolean;gainDb:number;cutoff:number;direction:number;analyzing:boolean;monitoring:boolean }
 export interface DspParameters {
-  source: 'oscillator' | 'microphone'; oscillatorWave: OscillatorType; frequency: number; secondFrequency: number;
-  oscillatorCutoff:number; oscillatorQ:number; oscillatorVolume:number; monitor:boolean;
-  analysis: 'fft' | 'cwt'; spectrum: 'raw' | 'relative'; frequencyAxis: 'log' | 'linear'; fftSize: number;
-  cwtCycles:number;cwtAverage:number;harmonicMarkers:boolean;fixedDb:boolean;dbFloor:number;dbCeiling:number;
-  mode: DspMode; layers: number; band: 'raw' | 'low' | 'mid' | 'high'; blend: 'multiply' | 'add' | 'maximum' | 'blend' | 'screen' | 'planeMultiply';
-  blendAmount: number; direction: number; phase: number; propagation: number; radialExtent: number; radialSourceRadius:number;
-  layerLayout:'line'|'circle';layoutRadius:number;angleDistribution:'even'|'fixed';angleStep:number;xSpacing:number;ySpacing:number;assignment:'all'|'cycle'|'bands';
-  palette: 'spectral' | 'mineral' | 'temperature' | 'mono'; rmsPulse: 'off' | 'thickness' | 'opacity'; rmsPulseDepth: number;
-  rmsLuminosity: boolean; colorPulseDepth: number; pressureChroma: number; exposure: number; gate: number;
-  adaptive:boolean;adaptation:number;contrast:number;response:number;persistence:number;diffusion:number;background:number;
+ oscillators:DspOscillator[];microphone:DspMicrophone;monitorMuted:boolean;
+ analysis:'fft'|'cwt';spectrum:'raw'|'relative';frequencyAxis:'log'|'linear';fftSize:number;cwtCycles:number;cwtAverage:number;harmonicMarkers:boolean;fixedDb:boolean;dbFloor:number;dbCeiling:number;
+ mode:DspMode;blend:'multiply'|'add'|'maximum'|'blend'|'screen'|'planeMultiply';blendAmount:number;propagation:number;radialExtent:number;radialSourceRadius:number;
+ layerLayout:'line'|'circle';layoutRadius:number;angleDistribution:'even'|'fixed';angleStep:number;xSpacing:number;ySpacing:number;assignment:'all'|'cycle'|'bands';
+ palette:'spectral'|'mineral'|'temperature'|'mono';rmsPulse:'off'|'thickness'|'opacity';rmsPulseDepth:number;rmsLuminosity:boolean;colorPulseDepth:number;pressureChroma:number;
+ exposure:number;gate:number;adaptive:boolean;adaptation:number;contrast:number;response:number;persistence:number;diffusion:number;background:number;
 }
-
-export const baseParameters: DspParameters = {
-  source: 'oscillator', oscillatorWave: 'sawtooth', frequency: 110, secondFrequency: 165,
-  oscillatorCutoff:4000,oscillatorQ:.707,oscillatorVolume:35,monitor:false,
-  analysis: 'fft', spectrum: 'raw', frequencyAxis: 'log', fftSize: 2048,
-  cwtCycles:6,cwtAverage:120,harmonicMarkers:true,fixedDb:false,dbFloor:-90,dbCeiling:-15,
-  mode: 'stripes', layers: 1, band: 'raw', blend: 'multiply', blendAmount: .5,
-  direction: 0, phase: 0, propagation: 24, radialExtent: 400,radialSourceRadius:1,
-  layerLayout:'line',layoutRadius:400,angleDistribution:'even',angleStep:60,xSpacing:120,ySpacing:0,assignment:'all',
-  palette: 'spectral', rmsPulse: 'off', rmsPulseDepth: 2, rmsLuminosity: false,
-  colorPulseDepth: 2, pressureChroma: 1.5, exposure: 25, gate: 0,
-  adaptive:false,adaptation:.5,contrast:1,response:0,persistence:0,diffusion:0,background:.08,
+export const oscillator=(id:string,frequency:number,direction=0):DspOscillator=>({id,playing:true,visible:true,waveform:'sawtooth',frequency,levelDb:-9,cutoff:4000,direction,phase:0,band:'raw'});
+export const baseParameters:DspParameters={
+ oscillators:[oscillator('oscillator-1',110)],microphone:{enabled:false,gainDb:0,cutoff:12000,direction:0,analyzing:true,monitoring:false},monitorMuted:true,
+ analysis:'fft',spectrum:'raw',frequencyAxis:'log',fftSize:2048,cwtCycles:6,cwtAverage:120,harmonicMarkers:true,fixedDb:false,dbFloor:-90,dbCeiling:-15,
+ mode:'stripes',blend:'multiply',blendAmount:.5,propagation:24,radialExtent:400,radialSourceRadius:1,layerLayout:'line',layoutRadius:400,angleDistribution:'even',angleStep:60,xSpacing:120,ySpacing:0,assignment:'all',
+ palette:'spectral',rmsPulse:'off',rmsPulseDepth:2,rmsLuminosity:false,colorPulseDepth:2,pressureChroma:1.5,exposure:25,gate:0,adaptive:false,adaptation:.5,contrast:1,response:0,persistence:0,diffusion:0,background:.08,
 };
-
-export interface Lesson { slug: LessonSlug; number: number; title: string; summary: string; groups: ControlGroup[]; defaults: Partial<DspParameters>; exercises: string[]; }
-export const lessons: Lesson[] = [
-  { slug: 'audio-processing', number: 1, title: 'Audio Processing', summary: 'See how sound becomes samples, spectra, and time-frequency images.', groups: ['audio','spectrum','visualization'], defaults: { mode:'stripes', layers:1, analysis:'fft', band:'raw' }, exercises: ['Start the oscillator, then switch between FFT and CWT.', 'Compare logarithmic and linear frequency axes.', 'Try Low, Mid, and High filters, then enable the microphone.', 'Compare a live spectrum with its time-frequency history.'] },
-  { slug: 'interference-patterns', number: 2, title: 'Interference Patterns', summary: 'Combine traveling waves and inspect constructive and destructive interference.', groups: ['audio','spectrum','visualization','layers','geometry','color'], defaults: { mode:'crest', layers:3, analysis:'fft', palette:'spectral' }, exercises: ['Change direction and phase without resetting propagation.', 'Compare Crest overlay with signed Pressure sum.', 'Tune the two oscillator frequencies to a simple ratio.', 'Find a geometry that produces a stable interference region.'] },
-  { slug: 'make-some-art', number: 3, title: 'Make Some Art', summary: 'Use the complete instrument and save a restorable visual state.', groups: ['audio','spectrum','visualization','layers','geometry','color','rms'], defaults: { mode:'rings', layers:4, analysis:'cwt', palette:'mineral', rmsPulse:'thickness' }, exercises: ['Choose a preset and change at least three controls.', 'Use RMS to connect broadband energy to color or thickness.', 'Copy a sketch link and reopen it.', 'Open a presentation window and make a full-screen composition.'] },
+export interface Lesson {slug:LessonSlug;number:number;title:string;summary:string;defaults:Partial<DspParameters>;exercises:string[]}
+export const lessons:Lesson[]=[
+ {slug:'audio-processing',number:1,title:'Audio Processing',summary:'See how sound becomes samples, spectra, and time-frequency images.',defaults:{mode:'stripes',analysis:'fft',oscillators:[oscillator('oscillator-1',110)]},exercises:['Listen to the oscillator, then switch between FFT and CWT.','Compare logarithmic and linear frequency axes.','Try Low, Mid, and High filters, then enable the microphone.','Compare a live spectrum with its time-frequency history.']},
+ {slug:'interference-patterns',number:2,title:'Interference Patterns',summary:'Combine traveling waves and inspect constructive and destructive interference.',defaults:{mode:'crest',analysis:'fft',oscillators:[oscillator('oscillator-1',110,0),oscillator('oscillator-2',165,180)]},exercises:['Change direction and phase without resetting propagation.','Compare Crest overlay with signed Pressure sum.','Tune the two oscillator frequencies to a simple ratio.','Find a geometry that produces a stable interference region.']},
+ {slug:'make-some-art',number:3,title:'Make Some Art',summary:'Use the complete instrument and save a restorable visual state.',defaults:{mode:'rings',analysis:'cwt',oscillators:[oscillator('oscillator-1',110),oscillator('oscillator-2',165,120),oscillator('oscillator-3',220,240)],rmsPulse:'thickness'},exercises:['Add or remove oscillators and change at least three controls.','Use RMS to connect broadband energy to color or thickness.','Copy a sketch link and reopen it.','Open a presentation window and make a full-screen composition.']},
 ];
-export const lessonBySlug = (slug: string) => lessons.find((lesson) => lesson.slug === slug);
-
-export const presets: Record<string, Partial<DspParameters>> = {
-  'Spectral rings': { mode:'rings', analysis:'fft', layers:3, blend:'multiply', palette:'spectral' },
-  'Mineral interference': { mode:'pressure', layers:5, blend:'planeMultiply', palette:'mineral', rmsLuminosity:true },
-  'Bright field': { mode:'crest', layers:4, blend:'screen', palette:'temperature', rmsPulse:'opacity' },
-  'CWT history': { mode:'scalogram', analysis:'cwt', palette:'spectral' },
-};
-
-const keys = Object.keys(baseParameters) as (keyof DspParameters)[];
-const options:Partial<Record<keyof DspParameters,readonly unknown[]>>={
- source:['oscillator','microphone'],oscillatorWave:['sine','sawtooth','square','triangle'],analysis:['fft','cwt'],spectrum:['raw','relative'],frequencyAxis:['log','linear'],
- mode:['stripes','rings','crest','pressure','spectrogram','scalogram'],band:['raw','low','mid','high'],blend:['multiply','add','maximum','blend','screen','planeMultiply'],
- palette:['spectral','mineral','temperature','mono'],rmsPulse:['off','thickness','opacity'],fftSize:[512,1024,2048,4096,8192,16384],
- layerLayout:['line','circle'],angleDistribution:['even','fixed'],assignment:['all','cycle','bands'],
-};
-export function validateParameters(input: unknown): Partial<DspParameters> {
-  if (!input || typeof input !== 'object') return {};
-  const candidate = input as Record<string, unknown>, output: Partial<DspParameters> = {};
-  for (const key of keys) {
-    const value = candidate[key]; const sample = baseParameters[key];
-    if (typeof value === typeof sample && (!options[key] || options[key]?.includes(value))) (output as Record<string, unknown>)[key] = value;
-  }
-  if (output.frequency !== undefined) output.frequency = Math.min(1000, Math.max(40, output.frequency));
-  if (output.secondFrequency !== undefined) output.secondFrequency = Math.min(1000, Math.max(40, output.secondFrequency));
-  if (output.layers !== undefined) output.layers = Math.min(8, Math.max(1, Math.round(output.layers)));
-  for(const key of ['blendAmount','rmsPulseDepth','colorPulseDepth','pressureChroma'] as const) if(output[key]!==undefined) output[key]=Math.max(0,Math.min(key==='blendAmount'?1:2,output[key]!));
-  return output;
-}
-export function encodeSketch(parameters: DspParameters) {
-  const changed = Object.fromEntries(keys.filter((key) => parameters[key] !== baseParameters[key]).map((key) => [key, parameters[key]]));
-  return btoa(encodeURIComponent(JSON.stringify(changed))).replaceAll('+','-').replaceAll('/','_').replaceAll('=','');
-}
-export function decodeSketch(value: string | null): Partial<DspParameters> {
-  if (!value || value.length > 4096) return {};
-  try { return validateParameters(JSON.parse(decodeURIComponent(atob(value.replaceAll('-','+').replaceAll('_','/'))))); } catch { return {}; }
-}
+export const lessonBySlug=(slug:string)=>lessons.find(lesson=>lesson.slug===slug);
+const options:Partial<Record<keyof DspParameters,readonly unknown[]>>={analysis:['fft','cwt'],spectrum:['raw','relative'],frequencyAxis:['log','linear'],mode:['stripes','rings','timeFrequency','crest','pressure'],blend:['multiply','add','maximum','blend','screen','planeMultiply'],palette:['spectral','mineral','temperature','mono'],rmsPulse:['off','thickness','opacity'],fftSize:[512,1024,2048,4096,8192,16384],layerLayout:['line','circle'],angleDistribution:['even','fixed'],assignment:['all','cycle','bands']};
+const finite=(value:unknown,fallback:number,min:number,max:number)=>typeof value==='number'&&Number.isFinite(value)?Math.min(max,Math.max(min,value)):fallback;
+function validateOscillator(value:unknown,index:number):DspOscillator|null{if(!value||typeof value!=='object')return null;const item=value as Partial<DspOscillator>,fallback=oscillator(`oscillator-${index+1}`,110*Math.pow(1.5,index));return{id:typeof item.id==='string'&&item.id?item.id:fallback.id,playing:typeof item.playing==='boolean'?item.playing:true,visible:typeof item.visible==='boolean'?item.visible:true,waveform:['sine','sawtooth','square','triangle'].includes(item.waveform??'')?item.waveform!:fallback.waveform,frequency:finite(item.frequency,fallback.frequency,20,12000),levelDb:finite(item.levelDb,-9,-60,6),cutoff:finite(item.cutoff,4000,40,20000),direction:finite(item.direction,0,0,360),phase:finite(item.phase,0,0,360),band:['raw','low','mid','high'].includes(item.band??'')?item.band!:fallback.band};}
+export function validateParameters(input:unknown):Partial<DspParameters>{if(!input||typeof input!=='object')return{};const candidate=input as Record<string,unknown>,output:Partial<DspParameters>={};for(const key of Object.keys(baseParameters) as (keyof DspParameters)[]){if(key==='oscillators'||key==='microphone')continue;const value=candidate[key],sample=baseParameters[key];if(typeof value===typeof sample&&(!(typeof value==='number')||Number.isFinite(value))&&(!options[key]||options[key]?.includes(value)))(output as Record<string,unknown>)[key]=value;}if(Array.isArray(candidate.oscillators)){const ids=new Set<string>(),items=candidate.oscillators.slice(0,8).map(validateOscillator).filter((value):value is DspOscillator=>!!value).map((item,index)=>{const id=ids.has(item.id)?`oscillator-${index+1}`:item.id;ids.add(id);return{...item,id}});if(items.length)output.oscillators=items;}if(candidate.microphone&&typeof candidate.microphone==='object'){const mic=candidate.microphone as Partial<DspMicrophone>,base=baseParameters.microphone;output.microphone={enabled:typeof mic.enabled==='boolean'?mic.enabled:base.enabled,gainDb:finite(mic.gainDb,base.gainDb,-60,24),cutoff:finite(mic.cutoff,base.cutoff,40,20000),direction:finite(mic.direction,base.direction,0,360),analyzing:typeof mic.analyzing==='boolean'?mic.analyzing:base.analyzing,monitoring:typeof mic.monitoring==='boolean'?mic.monitoring:false};}return output;}
+const equal=(a:unknown,b:unknown)=>JSON.stringify(a)===JSON.stringify(b);
+export function encodeSketch(parameters:DspParameters){const changed=Object.fromEntries((Object.keys(baseParameters) as (keyof DspParameters)[]).filter(key=>!equal(parameters[key],baseParameters[key])).map(key=>[key,parameters[key]]));return btoa(encodeURIComponent(JSON.stringify(changed))).replaceAll('+','-').replaceAll('/','_').replaceAll('=','');}
+export function decodeSketch(value:string|null):Partial<DspParameters>{if(!value||value.length>12000)return{};try{return validateParameters(JSON.parse(decodeURIComponent(atob(value.replaceAll('-','+').replaceAll('_','/')))));}catch{return{}}}

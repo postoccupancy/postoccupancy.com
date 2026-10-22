@@ -1,133 +1,25 @@
-import { expect, test, type Page } from '@playwright/test';
-import { baseParameters, decodeSketch, encodeSketch, lessons } from '../src/lib/dsp-for-artists/course';
-import { colorAt } from '../src/components/dsp-for-artists/canvas';
+import {expect,test,type Page} from '@playwright/test';import {baseParameters,decodeSketch,encodeSketch,lessons,oscillator} from '../src/lib/dsp-for-artists/course';import {colorAt} from '../src/components/dsp-for-artists/canvas';
+test.beforeEach(async({page})=>{await page.routeWebSocket('wss://rf.postoccupancy.com',()=>{})});
+async function installAudioMock(page:Page){await page.addInitScript(()=>{const metrics={contexts:0,closed:0,oscillators:0,microphones:0,connections:0,disconnects:0,starts:0,stops:0};class Param{value=0;setTargetAtTime(value:number){this.value=value}}class Node{connect(){metrics.connections++;return this}disconnect(){metrics.disconnects++;return this}}class Oscillator extends Node{frequency=new Param();type:OscillatorType='sine';start(){metrics.starts++}stop(){metrics.stops++}}class Filter extends Node{frequency=new Param();Q=new Param();type:BiquadFilterType='lowpass'}class Gain extends Node{gain=new Param()}class Analyser extends Node{private size=2048;smoothingTimeConstant=0;minDecibels=-120;maxDecibels=0;get fftSize(){return this.size}set fftSize(value){this.size=value}get frequencyBinCount(){return this.size/2}getFloatFrequencyData(values:Float32Array){values.fill(-100);values[5+Math.floor(performance.now()/80)%4]=-18;values[20]=-28}getFloatTimeDomainData(values:Float32Array){for(let i=0;i<values.length;i++)values[i]=.12*Math.sin(i*.12+performance.now()/180)}}class Context{state:AudioContextState='suspended';sampleRate=48000;currentTime=0;destination=new Node();constructor(){metrics.contexts++}createGain(){return new Gain()}createOscillator(){metrics.oscillators++;return new Oscillator()}createBiquadFilter(){return new Filter()}createAnalyser(){return new Analyser()}createMediaStreamSource(){metrics.microphones++;return new Node()}async resume(){this.state='running'}async suspend(){this.state='suspended'}async close(){this.state='closed';metrics.closed++}}Object.defineProperty(window,'AudioContext',{value:Context});Object.defineProperty(navigator,'mediaDevices',{value:{getUserMedia:async()=>({getTracks:()=>[{stop(){}}]})}});Object.defineProperty(window,'__dspMetrics',{value:metrics})})}
+const metrics=(page:Page)=>page.evaluate(()=>(window as typeof window&{__dspMetrics:Record<string,number>}).__dspMetrics);
+async function expand(page:Page,name:string){const section=page.locator(`[data-control-section="${name}"]`);if(await section.locator('.MuiAccordionDetails-root').isHidden())await section.getByRole('button').click();return section}
+async function selectSegment(page:Page,label:string){await page.getByRole('button',{name:label,exact:true}).click()}
 
-test.beforeEach(async ({ page }) => { await page.routeWebSocket('wss://rf.postoccupancy.com', () => {}); });
+test('lesson metadata and oscillator-array sketch links round trip safely',()=>{expect(lessons.map(({slug})=>slug)).toEqual(['audio-processing','interference-patterns','make-some-art']);const changed={...baseParameters,mode:'pressure' as const,oscillators:[{...oscillator('alpha',220),visible:false,levelDb:-17}]};expect(decodeSketch(encodeSketch(changed))).toMatchObject({mode:'pressure',oscillators:[{id:'alpha',frequency:220,visible:false,levelDb:-17}]});expect(decodeSketch('not-valid')).toEqual({})});
+test('palette lookup survives non-finite and incomplete values',()=>{expect(colorAt([[5,9,25],[255,225,135]],Number.NaN)).toEqual([5,9,25]);expect(colorAt([],Infinity)).toEqual([0,0,0])});
 
-async function installAudioMock(page:Page) {
-  await page.addInitScript(() => {
-    const metrics={contexts:0,closed:0,oscillators:0,microphones:0,connections:0};
-    class Param { value=0;setTargetAtTime(value:number){this.value=value;} }
-    class Node { connect(){metrics.connections++;return this;}disconnect(){return this;} }
-    class Oscillator extends Node {frequency=new Param();type:OscillatorType='sine';start(){}stop(){} }
-    class Filter extends Node {frequency=new Param();Q=new Param();type:BiquadFilterType='lowpass';}
-    class Gain extends Node {gain=new Param();}
-    class Analyser extends Node {private size=2048;smoothingTimeConstant=0;minDecibels=-120;maxDecibels=0;get fftSize(){return this.size}set fftSize(value){this.size=value}get frequencyBinCount(){return this.size/2}getFloatFrequencyData(values:Float32Array){values.fill(-100);const tick=Math.floor(performance.now()/80);values[5+(tick%4)]=-18;values[20]=-28;values[60]=-35;}getFloatTimeDomainData(values:Float32Array){for(let index=0;index<values.length;index++)values[index]=.12*Math.sin(index*.12+performance.now()/180);}}
-    class Context {state:AudioContextState='suspended';sampleRate=48000;currentTime=0;destination=new Node();constructor(){metrics.contexts++;}createGain(){return new Gain()}createOscillator(){metrics.oscillators++;return new Oscillator()}createBiquadFilter(){return new Filter()}createAnalyser(){return new Analyser()}createMediaStreamSource(){metrics.microphones++;return new Node()}async resume(){this.state='running'}async suspend(){this.state='suspended'}async close(){this.state='closed';metrics.closed++;}}
-    Object.defineProperty(window,'AudioContext',{value:Context});
-    Object.defineProperty(navigator,'mediaDevices',{value:{getUserMedia:async()=>({getTracks:()=>[{stop(){}}]})}});
-    Object.defineProperty(window,'__dspMetrics',{value:metrics});
-  });
-}
+test('one engine and canvas persist across visualization and lesson changes',async({page})=>{await installAudioMock(page);await page.goto('/lab/dsp-for-artists/audio-processing');const canvas=page.locator('canvas');await expect(canvas).toBeVisible();await canvas.evaluate(node=>{(node as HTMLCanvasElement&{token?:string}).token='persistent'});await page.getByRole('button',{name:'Unmute audio monitoring'}).click();await expect.poll(async()=>(await metrics(page)).contexts).toBe(1);await expand(page,'spectrum');await selectSegment(page,'Visualization: Rings');await expect(page.locator('canvas[aria-label="rings audio visualization"]')).toBeVisible();await page.getByRole('link',{name:'Next'}).click();await expect(page).toHaveURL(/interference-patterns/);expect(await page.locator('canvas').evaluate(node=>(node as HTMLCanvasElement&{token?:string}).token)).toBe('persistent');expect((await metrics(page)).contexts).toBe(1)});
 
-async function chooseMode(page:Page,name:string) {
-  await page.locator('[data-control-group=visualization] [role="combobox"]').click();
-  await page.getByRole('option',{name}).click();
-}
+test('oscillators are independent and show/hide does not stop generation',async({page})=>{await installAudioMock(page);await page.goto('/lab/dsp-for-artists/interference-patterns');await page.getByRole('button',{name:'Unmute audio monitoring'}).click();const first=await expand(page,'oscillator-1'),second=await expand(page,'oscillator-2');await first.getByLabel('Frequency precise value').fill('220');await second.getByLabel('Frequency precise value').fill('330');await expect(first.getByLabel('Frequency precise value')).toHaveValue('220');await expect(second.getByLabel('Frequency precise value')).toHaveValue('330');const before=await metrics(page);await first.getByRole('button',{name:'Shown'}).click();await expect(first.getByRole('button',{name:'Hidden'})).toBeVisible();const after=await metrics(page);expect(after.oscillators).toBe(before.oscillators);expect(after.stops).toBe(before.stops)});
 
-test('lesson metadata and sketch links round trip safely', () => {
-  expect(lessons.map(({slug})=>slug)).toEqual(['audio-processing','interference-patterns','make-some-art']);
-  const changed={...baseParameters,frequency:220,mode:'pressure' as const,layers:5};
-  expect(decodeSketch(encodeSketch(changed))).toMatchObject({frequency:220,mode:'pressure',layers:5});
-  expect(decodeSketch('not-valid')).toEqual({});
-});
+test('microphone and oscillators analyze together while global mute leaves frames running',async({page})=>{await installAudioMock(page);await page.goto('/lab/dsp-for-artists/audio-processing');await page.getByRole('button',{name:'Enable microphone'}).click();await expect(page.getByRole('button',{name:'Disable microphone'})).toBeVisible();await expect.poll(async()=>(await metrics(page)).connections).toBeGreaterThan(5);expect(await metrics(page)).toMatchObject({contexts:1,microphones:1,oscillators:1});const canvas=page.locator('canvas'),before=await canvas.evaluate(node=>(node as HTMLCanvasElement).toDataURL());await page.getByRole('button',{name:'Unmute audio monitoring'}).click();await page.getByRole('button',{name:'Mute audio monitoring'}).click();await page.waitForTimeout(180);const after=await canvas.evaluate(node=>(node as HTMLCanvasElement).toDataURL());expect(after).not.toBe(before);expect((await metrics(page)).stops).toBe(0)});
 
-test('palette lookup survives non-finite and incomplete analysis values', () => {
-  expect(colorAt([[5,9,25],[255,225,135]], Number.NaN)).toEqual([5,9,25]);
-  expect(colorAt([], Number.POSITIVE_INFINITY)).toEqual([0,0,0]);
-});
+test('five visualization choices follow FFT or CWT without replacing the canvas',async({page})=>{await page.goto('/lab/dsp-for-artists/audio-processing');const canvas=page.locator('canvas');await canvas.evaluate(node=>{(node as HTMLCanvasElement&{token?:string}).token='same'});const spectrum=await expand(page,'spectrum');for(const[label,aria]of[['Visualization: Linear','stripes'],['Visualization: Rings','rings'],['Visualization: Crest','crest'],['Visualization: Pressure','pressure']]as const){await selectSegment(page,label);await expect(page.locator(`canvas[aria-label="${aria} audio visualization"]`)).toBeVisible()}await selectSegment(page,'Visualization: Time');await expect(page.locator('canvas[aria-label="spectrogram audio visualization"]')).toBeVisible();await selectSegment(page,'Analysis: CWT');await expect(page.locator('canvas[aria-label="scalogram audio visualization"]')).toBeVisible();expect(await canvas.evaluate(node=>(node as HTMLCanvasElement&{token?:string}).token)).toBe('same');await expect(spectrum.getByText('CWT cycles')).toBeVisible()});
 
-test('one audio engine and canvas persist across lesson and visualization changes', async ({page}) => {
-  await installAudioMock(page);
-  await page.goto('/lab/dsp-for-artists/audio-processing');
-  const canvas=page.locator('canvas[aria-label="stripes audio visualization"]');
-  await expect(canvas).toBeVisible();
-  await canvas.evaluate(element=>{(element as HTMLCanvasElement&{token?:string}).token='persistent'});
-  await page.getByRole('button',{name:'Start audio'}).click();
-  await expect(page.getByText('Oscillators analyzing')).toBeVisible();
-  expect(await page.evaluate(()=>(window as typeof window&{__dspMetrics:{contexts:number}}).__dspMetrics.contexts)).toBe(1);
-  await chooseMode(page,'Radial rings');
-  await expect(page.locator('canvas[aria-label="rings audio visualization"]')).toBeVisible();
-  expect(await page.locator('canvas').evaluate(element=>(element as HTMLCanvasElement&{token?:string}).token)).toBe('persistent');
-  await page.getByRole('link',{name:'Next'}).click();
-  await expect(page).toHaveURL('/lab/dsp-for-artists/interference-patterns');
-  await expect(page.locator('canvas[aria-label="crest audio visualization"]')).toBeVisible();
-  expect(await page.locator('canvas').evaluate(element=>(element as HTMLCanvasElement&{token?:string}).token)).toBe('persistent');
-  expect(await page.evaluate(()=>(window as typeof window&{__dspMetrics:{contexts:number}}).__dspMetrics.contexts)).toBe(1);
-});
+test('conditional controls and independent accordions behave declaratively',async({page})=>{await page.goto('/lab/dsp-for-artists/audio-processing');const mic=page.locator('[data-control-section=microphone]'),osc=page.locator('[data-control-section=oscillator-1]'),spectrum=page.locator('[data-control-section=spectrum]');await expect(mic.locator('.MuiAccordionDetails-root')).toBeVisible();await expect(osc.locator('.MuiAccordionDetails-root')).toBeHidden();await osc.getByRole('button').click();await spectrum.getByRole('button').click();await expect(osc.locator('.MuiAccordionDetails-root')).toBeVisible();await expect(spectrum.locator('.MuiAccordionDetails-root')).toBeVisible();await expect(spectrum.getByText('FFT window')).toBeVisible();await selectSegment(page,'Analysis: CWT');await expect(spectrum.getByText('FFT window')).toHaveCount(0);await expect(spectrum.getByText('CWT cycles')).toBeVisible();await selectSegment(page,'Visualization: Crest');await expect(page.locator('[data-control-section=expression]')).toBeVisible();await expand(page,'expression');await expect(page.getByText('Pulse depth')).toHaveCount(0);await selectSegment(page,'RMS pulse: Thickness');await expect(page.getByText('Pulse depth')).toBeVisible()});
 
-test('lesson routes preserve controls and all six visualization modes use one canvas', async ({page}) => {
-  await page.goto('/lab/dsp-for-artists/audio-processing');
-  await expect(page.getByRole('heading',{name:'Audio Processing'})).toBeVisible();
-  await expect(page.locator('[data-control-group=layers]')).toHaveCount(0);
-  await page.getByRole('slider',{name:'Tone 1 frequency (Hz)'}).fill('220');
-  for(const [label,mode] of [['Radial rings','rings'],['FFT spectrogram','spectrogram'],['CWT scalogram','scalogram']] as const){await chooseMode(page,label);await expect(page.locator(`canvas[aria-label="${mode} audio visualization"]`)).toBeVisible();}
-  await page.getByRole('link',{name:'Next'}).click();
-  await expect(page.getByRole('slider',{name:'Tone 1 frequency (Hz)'})).toHaveValue('220');
-  await expect(page.getByRole('slider',{name:'Layers'})).toHaveAttribute('min','1');
-  await expect(page.locator('canvas[aria-label="crest audio visualization"]')).toBeVisible();
-  await chooseMode(page,'Pressure sum');
-  await expect(page.locator('canvas[aria-label="pressure audio visualization"]')).toBeVisible();
-});
+test('canvas survives responsive navigation changes and legacy controls never mount',async({page})=>{await page.setViewportSize({width:1280,height:800});await page.goto('/lab/dsp-for-artists/audio-processing');const canvas=page.locator('canvas');await canvas.evaluate(node=>{(node as HTMLCanvasElement&{token?:string}).token='layout'});const navToggle=page.getByRole('button',{name:/collapse navigation|expand navigation/i});if(await navToggle.count()){await navToggle.click();expect(await canvas.evaluate(node=>(node as HTMLCanvasElement&{token?:string}).token)).toBe('layout')}await expect(page.locator('iframe')).toHaveCount(0);await expect(page.locator('input[type=color]')).toHaveCount(0)});
 
-test('microphone source uses the existing engine and cleanup closes it once', async ({page}) => {
-  await installAudioMock(page);
-  await page.goto('/lab/dsp-for-artists/audio-processing');
-  await page.getByRole('button',{name:'Start audio'}).click();
-  await page.getByRole('button',{name:'Enable microphone'}).click();
-  await expect(page.getByText('Microphone analyzing')).toBeVisible();
-  expect(await page.evaluate(()=>(window as typeof window&{__dspMetrics:{contexts:number;microphones:number}}).__dspMetrics)).toMatchObject({contexts:1,microphones:1});
-  await page.getByRole('link',{name:'Post Occupancy'}).click();
-  await expect(page).toHaveURL('/');
-  await expect.poll(()=>page.evaluate(()=>(window as typeof window&{__dspMetrics:{closed:number}}).__dspMetrics.closed)).toBe(1);
-});
+test('presentation receives oscillator state and live analysis',async({page})=>{await installAudioMock(page);await page.goto('/lab/dsp-for-artists/make-some-art');await page.getByRole('button',{name:'Unmute audio monitoring'}).click();const popupPromise=page.waitForEvent('popup');await page.getByRole('button',{name:'More tutorial actions'}).click();await page.getByRole('menuitem',{name:'Open Presentation Window'}).click();const presentation=await popupPromise;await expect(presentation.locator('canvas[aria-label="rings audio visualization"]')).toBeVisible();await expect(presentation.getByText('Waiting for the tutorial window…')).toHaveCount(0);await presentation.close()});
 
-test('crest and pressure preserve moving plane-wave output and respond to phase', async ({page}) => {
-  await installAudioMock(page);
-  await page.goto('/lab/dsp-for-artists/interference-patterns');
-  await page.getByRole('button',{name:'Start audio'}).click();
-  const canvas=page.locator('canvas');
-  await page.waitForTimeout(350);
-  const crestA=await canvas.evaluate(element=>(element as HTMLCanvasElement).toDataURL());
-  await page.waitForTimeout(250);
-  const crestB=await canvas.evaluate(element=>(element as HTMLCanvasElement).toDataURL());
-  expect(crestB).not.toBe(crestA);
-  await page.getByRole('slider',{name:'Phase (degrees)'}).fill('90');
-  await page.waitForTimeout(100);
-  const phased=await canvas.evaluate(element=>(element as HTMLCanvasElement).toDataURL());
-  expect(phased).not.toBe(crestB);
-  await chooseMode(page,'Pressure sum');
-  await page.waitForTimeout(100);
-  const pressure=await canvas.evaluate(element=>(element as HTMLCanvasElement).toDataURL());
-  expect(pressure).not.toBe(phased);
-});
-
-test('course navigation expands to all lessons and malformed shared state is harmless', async ({page}) => {
-  await page.goto('/lab/dsp-for-artists/audio-processing?sketch=broken');
-  const nav=page.getByRole('navigation',{name:'Main navigation'});
-  await expect(nav.getByRole('link',{name:'Audio Processing'})).toHaveAttribute('aria-current','page');
-  await expect(nav.getByRole('link',{name:'Interference Patterns'})).toBeVisible();
-  await expect(page.locator('canvas[aria-label="stripes audio visualization"]')).toBeVisible();
-});
-
-test('invalid persisted controls cannot crash the renderer', async ({page}) => {
-  const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
-  await page.addInitScript(()=>sessionStorage.setItem('dsp-for-artists:v1',JSON.stringify({layers:Number.NaN,palette:'missing',rmsPulseDepth:'loud'})));
-  await page.goto('/lab/dsp-for-artists/interference-patterns');
-  await expect(page.locator('canvas[aria-label="crest audio visualization"]')).toBeVisible();
-  await page.waitForTimeout(250);
-  expect(errors).toEqual([]);
-});
-
-test('presentation receives parameters and analysis without frame React state', async ({page}) => {
-  await installAudioMock(page);
-  await page.goto('/lab/dsp-for-artists/make-some-art');
-  await page.getByRole('button',{name:'Start audio'}).click();
-  const popupPromise=page.waitForEvent('popup');
-  await page.getByRole('button',{name:'Open presentation window'}).click();
-  const presentation=await popupPromise;
-  await expect(presentation).toHaveURL(/\/lab\/dsp-for-artists\/presentation\?session=/);
-  await expect(presentation.locator('canvas[aria-label="rings audio visualization"]')).toBeVisible();
-  await expect(presentation.getByText('Waiting for the tutorial window…')).toHaveCount(0);
-  await presentation.close();
-});
+test('invalid persisted controls cannot crash the renderer',async({page})=>{const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));await page.addInitScript(()=>sessionStorage.setItem('dsp-for-artists:v2',JSON.stringify({oscillators:[{id:'bad',frequency:NaN}],palette:'missing'})));await page.goto('/lab/dsp-for-artists/audio-processing');await expect(page.locator('canvas')).toBeVisible();await page.waitForTimeout(200);expect(errors).toEqual([])});
