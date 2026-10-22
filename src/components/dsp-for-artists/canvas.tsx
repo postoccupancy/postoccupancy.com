@@ -17,8 +17,9 @@ export function DspCanvas({external}:{presentation?:boolean;external?:{parameter
   useEffect(()=>{
     const canvas=canvasRef.current!;const renderer=new WorkshopRenderer(canvas,parametersRef.current);rendererRef.current=renderer;
     const unsubscribe=passive?()=>{}:course.engine.subscribe(frame=>renderer.pushFrame(frame));
+    const measure=()=>{const box=canvas.getBoundingClientRect();renderer.resize(box.width,box.height,devicePixelRatio||1)};measure();
     const observer=new ResizeObserver(entries=>{const box=entries[0]?.contentRect;if(box)renderer.resize(box.width,box.height,devicePixelRatio||1)});observer.observe(canvas);
-    let animation=0,lastExternalSequence=-1;const draw=(now:number)=>{const frame=externalFrameRef?.current;if(frame&&frame.sequence!==lastExternalSequence){lastExternalSequence=frame.sequence;renderer.pushFrame(frame)}renderer.render(now);animation=requestAnimationFrame(draw)};animation=requestAnimationFrame(draw);
+    let animation=0,lastExternalSequence=-1,remeasure=true;const draw=(now:number)=>{if(remeasure){remeasure=false;measure()}const frame=externalFrameRef?.current;if(frame&&frame.sequence!==lastExternalSequence){lastExternalSequence=frame.sequence;renderer.pushFrame(frame)}renderer.render(now);animation=requestAnimationFrame(draw)};animation=requestAnimationFrame(draw);
     return()=>{cancelAnimationFrame(animation);observer.disconnect();unsubscribe();renderer.destroy();rendererRef.current=null};
   },[course.engine,externalFrameRef,passive]);
 
