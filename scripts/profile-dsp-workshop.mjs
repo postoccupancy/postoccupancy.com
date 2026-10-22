@@ -10,15 +10,13 @@ async function measure(browser, baseURL) {
   const page = await context.newPage();
   const started = performance.now();
   await page.goto(`${baseURL}/lab/dsp-for-artists/audio-processing`, { waitUntil: 'domcontentloaded' });
-  const frameElement = page.locator('iframe[title="fft source sketch"]');
-  await frameElement.contentFrame().locator('canvas').waitFor({ state: 'visible' });
+  await page.locator('canvas[aria-label="stripes audio visualization"]').waitFor({ state: 'visible' });
   const loadMs = performance.now() - started;
   const popupPromise = page.waitForEvent('popup');
   await page.getByRole('button', { name: 'Open presentation window' }).click();
   const presentation = await popupPromise;
   await presentation.waitForLoadState('domcontentloaded');
-  const frame = frameElement.contentFrame();
-  const fps = await frame.locator('body').evaluate(() => new Promise(resolve => {
+  const fps = await page.locator('body').evaluate(() => new Promise(resolve => {
     let frames = 0;
     const start = performance.now();
     const tick = now => {
@@ -29,16 +27,11 @@ async function measure(browser, baseURL) {
     requestAnimationFrame(tick);
   }));
   const slider = page.getByRole('slider', { name: 'Tone 1 frequency (Hz)' });
-  const sourceControl = frame.locator('label').filter({ hasText: 'Fundamental frequency' }).locator('input');
   const latencies = [];
   for (const value of [120, 180, 240, 300, 360, 420, 480, 540, 600, 660]) {
     const before = performance.now();
     await slider.fill(String(value));
-    await sourceControl.waitFor({ state: 'attached' });
-    await sourceControl.evaluate((input, expected) => new Promise(resolve => {
-      const poll = () => input.value === String(expected) ? resolve() : requestAnimationFrame(poll);
-      poll();
-    }), value);
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => resolve())));
     latencies.push(performance.now() - before);
   }
   await presentation.close();

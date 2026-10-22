@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';import { notFound } from 'next/navigation';import { DocsPage } from '@/layouts/docs/page';import { DspWorkspace } from '@/components/dsp-for-artists/workspace';import { lessonBySlug, lessonSlugs, type LessonSlug } from '@/lib/dsp-for-artists/course';
+import type { Metadata } from 'next';import { notFound } from 'next/navigation';import { lessonBySlug, lessonSlugs } from '@/lib/dsp-for-artists/course';
 export function generateStaticParams(){return lessonSlugs.map(lesson=>({lesson}))}
 export async function generateMetadata({params}:{params:Promise<{lesson:string}>}):Promise<Metadata>{const {lesson:slug}=await params,lesson=lessonBySlug(slug);if(!lesson)return{};return{title:`${lesson.title} | Post Occupancy`,description:lesson.summary}}
-export default async function Page({params}:{params:Promise<{lesson:string}>}){const {lesson:slug}=await params,lesson=lessonBySlug(slug);if(!lesson)notFound();return <DocsPage title={lesson.title} mode="viewport"><DspWorkspace slug={slug as LessonSlug}/></DocsPage>}
+export default async function Page({params}:{params:Promise<{lesson:string}>}){const {lesson:slug}=await params;if(!lessonBySlug(slug))notFound();return null}
