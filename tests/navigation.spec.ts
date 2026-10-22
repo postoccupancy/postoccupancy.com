@@ -28,24 +28,24 @@ test('all named routes render their title, breadcrumbs, and selected navigation'
 });
 
 test('sections collapse and active sections reopen on history navigation', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/nodes/indoor-sky');
   const nav = page.getByRole('navigation', { name: 'Main navigation' });
-  const nodes = nav.getByRole('button', { name: 'Nodes', exact: true });
-  await nodes.click();
-  await expect(nodes).toHaveAttribute('aria-expanded', 'false');
-  await expect(nav.getByRole('link', { name: 'Signals' })).not.toBeVisible();
-  await nav.getByRole('link', { name: 'Notes', exact: true }).click();
-  await expect(page).toHaveURL('/lab/notes');
-  await expect(page.getByRole('navigation', { name: 'Breadcrumb', exact: true })).toHaveText('Lab/Notes');
+  const sensors = nav.getByRole('button', { name: 'Sensors', exact: true });
+  await sensors.click();
+  await expect(sensors).toHaveAttribute('aria-expanded', 'false');
+  await expect(nav.getByRole('link', { name: 'Indoor Sky' })).not.toBeVisible();
+  await nav.getByRole('link', { name: 'Spectral Weather', exact: true }).click();
+  await expect(page).toHaveURL('/interfaces/spectral-visualizer');
+  await expect(page.getByRole('navigation', { name: 'Breadcrumb', exact: true })).toHaveText('Interfaces/Spectral Weather');
   await page.goBack();
-  await expect(nodes).toHaveAttribute('aria-expanded', 'true');
-  await expect(nav.getByRole('link', { name: 'Signals' })).toBeVisible();
+  await expect(sensors).toHaveAttribute('aria-expanded', 'true');
+  await expect(nav.getByRole('link', { name: 'Indoor Sky' })).toBeVisible();
   await page.getByRole('link', { name: 'Post Occupancy', exact: true }).click();
   await expect(page).toHaveURL('/');
-  await expect(page.getByRole('heading', { level: 1, name: 'Signals', exact: true })).toBeVisible();
-  await expect(page).toHaveTitle('Signals | Post Occupancy');
-  await expect(page.getByRole('navigation', { name: 'Breadcrumb', exact: true })).toHaveText('Nodes/Signals');
-  await expect(nav.getByRole('link', { name: 'Signals', exact: true })).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByRole('heading', { level: 1, name: 'DSP for Artists', exact: true })).toBeVisible();
+  await expect(page).toHaveTitle('DSP for Artists | Post Occupancy');
+  await expect(page.getByRole('navigation', { name: 'Breadcrumb', exact: true })).toHaveText('Lab/DSP for Artists');
+  await expect(nav.getByRole('link', { name: 'DSP for Artists', exact: true })).toHaveAttribute('aria-current', 'page');
 });
 
 test('collapsing the sidebar releases the full viewport width and retains a keyboard control', async ({ page }) => {
@@ -71,10 +71,10 @@ test('mobile drawer closes after navigation and with Escape without horizontal o
   await expect(page.getByRole('navigation', { name: 'Main navigation' })).not.toBeVisible();
   await opener.click();
   const nav = page.getByRole('navigation', { name: 'Main navigation' });
-  await nav.getByRole('link', { name: 'Microphone Visualizer', exact: true }).click();
+  await nav.getByRole('link', { name: 'Microphone', exact: true }).click();
   await expect(page).toHaveURL('/interfaces/microphone-visualizer');
   await expect(nav).not.toBeVisible();
-  await expect(page.getByRole('heading', { level: 1, name: 'Microphone Visualizer' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Microphone' })).toBeVisible();
   await opener.click();
   await expect(nav).toBeVisible();
   await page.keyboard.press('Escape');
@@ -89,13 +89,26 @@ test('unknown routes render a real 404', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible();
   await page.getByRole('link', { name: 'Return home' }).click();
   await expect(page).toHaveURL('/');
-  await expect(page.getByRole('heading', { level: 1, name: 'Signals', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'DSP for Artists', exact: true })).toBeVisible();
+});
+
+test('removed pages are absent and moved pages preserve useful legacy links', async ({ page }) => {
+  const nav = page.getByRole('navigation', { name: 'Main navigation' });
+  await page.goto('/');
+  await expect(nav.getByRole('button', { name: 'Hubs', exact: true })).toHaveCount(0);
+  for (const name of ['Notes', 'Weather Music', 'Time Series Observatory', 'Weather Brain']) await expect(nav.getByText(name, { exact: true })).toHaveCount(0);
+  for (const route of ['/lab/notes', '/instruments/supercollider-compositions', '/instruments/weather-music', '/interfaces/apartment-observatory', '/hubs/weather-brain']) {
+    expect((await page.goto(route))?.status()).toBe(404);
+  }
+  await page.goto('/hubs/electric-sea');
+  await expect(page).toHaveURL('/interfaces/electric-sea');
+  await page.goto('/lab/dsp-for-artists');
+  await expect(page).toHaveURL('/');
 });
 
 test('MDX prose surrounds a working React wave explorer', async ({ page }) => {
-  await page.goto('/lab/dsp-for-artists');
+  await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Frequency and amplitude', exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Try it', exact: true })).toBeVisible();
   const explorer = page.getByRole('region', { name: 'Wave explorer' });
   const frequency = explorer.getByRole('slider', { name: /Frequency/ });
   await frequency.focus();

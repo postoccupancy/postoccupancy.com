@@ -76,26 +76,24 @@ Historical deployment context: removing `docs/` from `b2b-dashboard-demo/.vercel
 
 ## Navigation and layout decisions
 
-Overview is the home route `/`, reached through the **Post Occupancy** wordmark. It has no sidebar entry and no breadcrumb. All navigation groups are peers; Overview is not their parent. Breadcrumbs read, for example, `Lab / DSP for Artists`, never `Overview / Lab / DSP for Artists`.
+DSP for Artists is the home route `/`, reached through the **Post Occupancy** wordmark and the first Lab navigation item. Breadcrumbs remain on article and dashboard pages; viewport instrument and lesson pages omit them.
 
 Current IA and routes:
 
 | Group | Page | Route |
 | --- | --- | --- |
-| Nodes | Electric Sky | `/nodes/electric-sky` |
-| Nodes | Indoor Sky | `/nodes/indoor-sky` |
-| Hubs | Electric Sea | `/hubs/electric-sea` |
-| Hubs | AI Weather Station | `/hubs/ai-weather-station` |
-| Interfaces | Anomaly Monitor | `/interfaces/apartment-observatory` |
-| Interfaces | Spectral Visualizer | `/interfaces/spectral-visualizer` |
-| Interfaces | Microphone Visualizer | `/interfaces/microphone-visualizer` |
-| Instruments | Resident Frequency | `/instruments/resident-frequency` |
-| Instruments | Pattern Party | `/instruments/processing-sketches` |
-| Instruments | Weather Music | `/instruments/supercollider-compositions` |
-| Lab | DSP for Artists | `/lab/dsp-for-artists` |
-| Lab | Notes | `/lab/notes` |
+| Lab | DSP for Artists | `/` |
+| Lab | Harmonics | `/lab/dsp-for-artists/audio-processing` |
+| Lab | Interference | `/lab/dsp-for-artists/interference-patterns` |
+| Lab | Sandbox | `/lab/dsp-for-artists/make-some-art` |
+| Sensors | Indoor Sky | `/nodes/indoor-sky` |
+| Interfaces | Electric Sea | `/interfaces/electric-sea` |
+| Interfaces | Spectral Weather | `/interfaces/spectral-visualizer` |
+| Interfaces | Microphone | `/interfaces/microphone-visualizer` |
+| Instruments | Signal Voices | `/instruments/resident-frequency` |
+| Instruments | Moire Patterns | `/instruments/processing-sketches` |
 
-Notes was deliberately moved under Lab; do not restore it as a separate top-level section. Groups do not have landing pages, so group breadcrumbs are labels rather than links.
+Notes, Weather Music, Time Series Observatory, Weather Brain, and the Hubs group were removed on 2026-10-22. Their former contentless routes return 404. The former Electric Sea and DSP landing URLs redirect to their new canonical locations. Groups do not have landing pages, so group breadcrumbs are labels rather than links.
 
 - The entire sidebar collapses, with a minimal fixed control to reopen it. Sections individually expand/collapse with disclosure arrows. Current links have a subtle active state.
 - Desktop sidebar width is 280px. Mobile uses a drawer. Keep keyboard/focus behavior, the skip link, and responsive overflow handling intact.

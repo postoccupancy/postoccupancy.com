@@ -233,7 +233,7 @@ export class RouterInterface {
   toggleOut(row: SignalRow) {
     if (row.signal.type === 'audio') {
       // Audio state comes back from the server; do not claim success optimistically.
-      this.router.send({ type: 'pcm_source_enable', device: row.signal.device, enabled: !row.signal.enabled, page: '/hubs/electric-sea' });
+      this.router.send({ type: 'pcm_source_enable', device: row.signal.device, enabled: !row.signal.enabled, page: '/interfaces/electric-sea' });
     } else {
       row.out = !row.out; write(`rf-out-${row.key}`, row.out); this.notify();
     }

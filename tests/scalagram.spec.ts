@@ -166,7 +166,7 @@ test('renders ten progressive scalagrams and cancels obsolete aggregation work',
       }
     }
   });
-  await page.goto('/');
+  await page.goto('/nodes/indoor-sky');
   await page.getByRole('button', { name: 'Scalagram', exact: true }).click();
   await expect(page.getByRole('img', { name: /Scalagram/ })).toHaveCount(10);
   const plots = page.locator('canvas[data-scalagram-columns]');
@@ -205,7 +205,7 @@ test('preserves the view through an initial preparation failure and recovers wit
       streams: [{ name: 'indoor-sky', param: 'humidity', unit: 'percent', samples: [[0, 100_000_000, 0]] }],
     }));
   });
-  await page.goto('/');
+  await page.goto('/nodes/indoor-sky');
   await page.getByRole('button', { name: 'Scalagram', exact: true }).click();
   const plot = page.locator('canvas[data-scalagram-columns]');
   await expect(plot).toHaveAttribute('data-scalagram-unavailable', /Insufficient reconstructed data/);

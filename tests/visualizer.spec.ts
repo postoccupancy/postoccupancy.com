@@ -30,7 +30,7 @@ test('selects discovered signals, plots all views, and keeps query history on on
     socket.onMessage((message) => sent.push(JSON.parse(String(message))));
   });
   await page.goto('/');
-  await page.getByRole('navigation').getByRole('link', { name: 'Spectral Visualizer', exact: true }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Spectral Weather', exact: true }).click();
   const selector = page.getByRole('combobox', { name: 'Signal', exact: true });
   await expect(selector).toHaveValue(temperature);
   sockets[0].send(batch(temperature));

@@ -58,7 +58,7 @@ export function RouterDashboard() {
   return <Box sx={tableStyle}>
     <Stack direction="row" spacing={2} useFlexGap sx={{ flexWrap: 'wrap', alignItems: 'center', mb: 3 }}>
       <Typography role="status" aria-label="Router connection" variant="body2" color={connected ? 'primary' : 'text.secondary'}>Router {router.status}</Typography>
-      <Link component={NextLink} href="/instruments/resident-frequency" variant="body2">Resident Frequency</Link>
+      <Link component={NextLink} href="/instruments/resident-frequency" variant="body2">Signal Voices</Link>
       <Link href={external('/modulation-spectrum/')} target="_blank" rel="noreferrer" variant="body2">Modulation spectrum ↗</Link>
       <Link href="http://127.0.0.1:3010/" target="_blank" rel="noreferrer" variant="body2">Local recorder ↗</Link>
     </Stack>
@@ -115,7 +115,7 @@ export function RouterDashboard() {
       <Typography variant="body2">“Send to port” sends router signals to a local MIDI output; “Receive from port” sends local MIDI input to the router. Only one direction is enabled per named port to prevent feedback.</Typography>
       <Typography variant="body2">CH / CC assignments, ranges, scalar output switches, and port directions are saved in this site’s local storage. Settings from the Pi site are separate. Scalar values are normalized to 0–127 with the original 0.3 smoothing; non-CC MIDI messages pass through.</Typography>
       <Typography variant="body2">OSC uses UDP ports 5005 into the Pi and 9000 back to directly connected clients. Cloudflare carries WebSocket data, but cannot deliver UDP to your computer. Audio Out affects the shared source; it does not start audio playback in this page.</Typography>
-      <Typography variant="body2">View links open Spectral Visualizer with the selected signal. <Link component={NextLink} href="/instruments/resident-frequency">Resident Frequency</Link> provides live voice extraction, browser audio, and MIDI output.</Typography>
+      <Typography variant="body2">View links open Spectral Weather with the selected signal. <Link component={NextLink} href="/instruments/resident-frequency">Signal Voices</Link> provides live voice extraction, browser audio, and MIDI output.</Typography>
     </Box>
   </Box>;
 }

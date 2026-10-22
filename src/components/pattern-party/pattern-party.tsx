@@ -39,7 +39,7 @@ export function PatternParty() {
       if (disposed || !root.current) return;
       controls.current = mountPatternParty(root.current, router, setStatus);
       setReady(true);
-    }).catch(() => { if (!disposed) setStatus('Could not load Pattern Party. Reload to try again.'); });
+    }).catch(() => { if (!disposed) setStatus('Could not load Moire Patterns. Reload to try again.'); });
     return () => { disposed = true; controls.current?.dispose(); controls.current = null; };
   }, [router]);
   useEffect(() => () => { presentationChannels.current.forEach((channel) => channel.close()); presentationChannels.current.clear(); }, []);

@@ -47,7 +47,7 @@ test('publishes five microphone values to Electric Sea without MIDI and renders 
     });
   });
   const sea = await context.newPage();
-  await sea.goto('/hubs/electric-sea');
+  await sea.goto('/interfaces/electric-sea');
   await page.goto(route);
   await expect(page.getByRole('button', { name: 'Enable microphone', exact: true })).toBeEnabled();
   const state = () => page.evaluate(() => (window as unknown as { micTest: MicTest }).micTest);
@@ -122,7 +122,7 @@ test('releases a microphone permission result that arrives after leaving the pag
   await page.evaluate(() => { (window as unknown as { micTest: MicTest }).micTest.mode = 'pending'; });
   await page.getByRole('button', { name: 'Enable microphone', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as unknown as { micTest: MicTest }).micTest.requested)).toBe(1);
-  await page.getByRole('navigation').getByRole('link', { name: 'Signals', exact: true }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Indoor Sky', exact: true }).click();
   await page.evaluate(() => { (window as unknown as { micTest: MicTest }).micTest.resolve!(); });
   await expect.poll(() => page.evaluate(() => (window as unknown as { micTest: MicTest }).micTest.stopped)).toBe(1);
   expect(await page.evaluate(() => (window as unknown as { micTest: MicTest }).micTest.closed)).toBe(1);

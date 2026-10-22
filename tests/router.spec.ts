@@ -32,7 +32,7 @@ test('replays router metadata after navigation, discovers signals, and acknowled
   const audio = page.getByRole('button', { name: 'pcm/electric-sky/audio output' });
   await expect(audio).toHaveAttribute('aria-pressed', 'false');
   await audio.click();
-  await expect.poll(() => sent.find((item) => item.type === 'pcm_source_enable')).toEqual({ type: 'pcm_source_enable', device: 'pcm/electric-sky/audio', enabled: true, page: '/hubs/electric-sea' });
+  await expect.poll(() => sent.find((item) => item.type === 'pcm_source_enable')).toEqual({ type: 'pcm_source_enable', device: 'pcm/electric-sky/audio', enabled: true, page: '/interfaces/electric-sea' });
   await expect(audio).toHaveAttribute('aria-pressed', 'false');
   sockets[0].send(JSON.stringify({ type: 'audio', device: 'pcm/electric-sky/audio', source: signal.source, enabled: true, available: true, sampleRate: 16000 }));
   await expect(audio).toHaveAttribute('aria-pressed', 'true');
@@ -46,7 +46,7 @@ test('replays router metadata after navigation, discovers signals, and acknowled
   await channel.fill('3'); await channel.press('Enter');
   await page.getByRole('button', { name: `${signal.device} output` }).click();
   await expect(page.getByRole('link', { name: `View ${signal.device}` })).toHaveAttribute('href', '/interfaces/spectral-visualizer?device=osc%2Felectric-sky%2Ftemperature');
-  await page.getByRole('link', { name: 'Signals', exact: true }).click();
+  await page.getByRole('link', { name: 'Indoor Sky', exact: true }).click();
   await page.getByRole('link', { name: 'Electric Sea', exact: true }).click();
   await expect(audio).toHaveAttribute('aria-pressed', 'true');
   sockets[0].send(JSON.stringify(signal));
@@ -62,7 +62,7 @@ test('replays router metadata after navigation, discovers signals, and acknowled
 test('refreshes metadata and capabilities after reconnect and presents USB batches', async ({ page }) => {
   const sockets: WebSocketRoute[] = [];
   await page.routeWebSocket('wss://rf.postoccupancy.com', (socket) => { sockets.push(socket); handshake(socket, `pi-${sockets.length}`); });
-  await page.goto('/hubs/electric-sea');
+  await page.goto('/interfaces/electric-sea');
   await expect(page.getByText('pi-1 (linux)')).toBeVisible();
   sockets[0].send(JSON.stringify({ type: 'sample_batch', source: signal.source, transport: 'usb', sendTimeUs: 1_000_000,
     streams: [{ device: signal.device, name: 'electric-sky', param: 'temperature', samples: [[0, 1_000_000, 23.4]] }] }));
@@ -85,7 +85,7 @@ test('maps MIDI, prevents port feedback, forwards input, and retains global port
   let socket!: WebSocketRoute;
   const sent: Record<string, unknown>[] = [];
   await page.routeWebSocket('wss://rf.postoccupancy.com', (ws) => { socket = ws; handshake(ws); ws.onMessage((raw) => sent.push(JSON.parse(String(raw)))); });
-  await page.goto('/hubs/electric-sea');
+  await page.goto('/interfaces/electric-sea');
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByRole('button', { name: 'Enable MIDI', exact: true }).click();
   await page.getByRole('button', { name: 'Send to Test bus', exact: true }).click();
@@ -110,7 +110,7 @@ test('maps MIDI, prevents port feedback, forwards input, and retains global port
   socket.send(JSON.stringify({ type: 'midi', device: 'Remote keyboard', source: 'remote', msgType: 'noteon', channel: 1, note: 62, velocity: 100, raw: [0x90, 62, 100] }));
   await expect.poll(async () => (await midiState()).sent).toContainEqual([0x90, 62, 100]);
   await page.getByRole('button', { name: 'Close settings' }).click();
-  await page.getByRole('link', { name: 'Signals', exact: true }).click();
+  await page.getByRole('link', { name: 'Indoor Sky', exact: true }).click();
   expect((await midiState()).closed).toBe(0);
   const count = (await midiState()).sent.length;
   socket.send(JSON.stringify(signal));

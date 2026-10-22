@@ -1,5 +1,11 @@
-import { redirect } from 'next/navigation';
+import type { Metadata } from 'next';
+import { SignalsDashboard } from '@/components/signals/signals-dashboard';
+import { getPage } from '@/content/site';
+import { DocsPage } from '@/layouts/docs/page';
+
+const page = getPage('/nodes/indoor-sky');
+export const metadata: Metadata = { title: `${page.title} | Post Occupancy`, description: page.description };
 
 export default function Page() {
-  redirect('/');
+  return <DocsPage title={page.title} section="Sensors" mode="dashboard"><SignalsDashboard /></DocsPage>;
 }

@@ -36,5 +36,5 @@ export function PatternPartyPresentation() {
   }, [session]);
 
   if (!validSession(session)) return <Box sx={{ width: '100vw', height: '100dvh', bgcolor: '#fff' }} />;
-  return <Box ref={root} aria-label={connected ? 'Pattern Party presentation' : 'Waiting for Pattern Party controller'} sx={{ width: '100vw', height: '100dvh', overflow: 'hidden', bgcolor: '#fff', '& canvas': { display: 'block' } }} />;
+  return <Box ref={root} aria-label={connected ? 'Moire Patterns presentation' : 'Waiting for Moire Patterns controller'} sx={{ width: '100vw', height: '100dvh', overflow: 'hidden', bgcolor: '#fff', '& canvas': { display: 'block' } }} />;
 }

@@ -46,7 +46,7 @@ export function MicrophoneVisualizer() {
       </Box>
     </Box>
     <Typography variant="body2" color="text.secondary" sx={{ mt: 3 }}>
-      Keep this page visible and <Link href="/hubs/electric-sea" target="_blank" rel="noopener">open Electric Sea in another window</Link> to see the five <code>json/mic-…</code> signals. No MIDI bus is required. In Electric Sea, assign CH/CC and enable Send to port to convert them into local MIDI. Leaving this page releases the microphone.
+      Keep this page visible and <Link href="/interfaces/electric-sea" target="_blank" rel="noopener">open Electric Sea in another window</Link> to see the five <code>json/mic-…</code> signals. No MIDI bus is required. In Electric Sea, assign CH/CC and enable Send to port to convert them into local MIDI. Leaving this page releases the microphone.
     </Typography>
   </Box>;
 }

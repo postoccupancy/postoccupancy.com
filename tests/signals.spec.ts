@@ -42,7 +42,7 @@ test('discovers channels, converts power, and shares one socket across routes', 
     socket.send('{broken json');
     socket.send(JSON.stringify({ type: 'sample_batch', streams: [null, { name: 'electric-sky', param: 'invalid', samples: [['bad', 1, 2]] }] }));
   });
-  await page.goto('/');
+  await page.goto('/nodes/indoor-sky');
   await expect(page.getByRole('region', { name: 'Electric Sky Temperature', exact: true })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Electric Sky Power', exact: true })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Electric Sky Solar input power', exact: true })).toBeVisible();
@@ -138,8 +138,8 @@ test('discovers channels, converts power, and shares one socket across routes', 
   await page.getByRole('button', { name: 'Close settings' }).click();
   await expect(page.getByText(/0\.5s delay/)).toBeVisible();
   await page.getByRole('link', { name: 'Electric Sea', exact: true }).click();
-  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Resident Frequency', exact: true }).click();
-  await page.getByRole('link', { name: 'Signals', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Signal Voices', exact: true }).click();
+  await page.getByRole('link', { name: 'Indoor Sky', exact: true }).click();
   await expect(page.getByRole('region', { name: 'Indoor Sky Humidity', exact: true })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Electric Sky Temperature', exact: true })).toBeVisible();
   expect(sockets).toHaveLength(1);
@@ -502,7 +502,7 @@ test('shows stale data, reconnects, and accepts a device clock reset', async ({ 
     sockets.push(socket);
     socket.send(batch('indoor-sky', 'temperature', 'celsius', 21));
   });
-  await page.goto('/');
+  await page.goto('/nodes/indoor-sky');
   const temperature = page.getByRole('region', { name: 'Indoor Sky Temperature', exact: true });
   await expect(temperature).toContainText('21.0000 °C');
   await expect(page.getByRole('status', { name: 'Connection status' })).toContainText('signal data stale', { timeout: 8000 });
