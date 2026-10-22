@@ -30,6 +30,7 @@ export interface DspAnalysisFrame {
   fftBandsDb: Float32Array<ArrayBuffer>;
   cwtBandsDb?: Float32Array<ArrayBuffer>;
   waveform: Float32Array<ArrayBuffer>;
+  microphoneWaveform?: Float32Array<ArrayBuffer>;
   rms: number;
 }
 
@@ -89,6 +90,7 @@ export class DspEngine implements DspEngineContract {
   private microphoneSource: MediaStreamAudioSourceNode | null = null;
   private microphoneFilter: BiquadFilterNode | null = null;
   private microphoneGain: GainNode | null = null;
+  private microphoneAnalyser: AnalyserNode | null = null;
   private microphoneConnected = false;
   private microphoneMonitorConnected = false;
   private microphoneEnabledRuntime = false;
@@ -154,8 +156,11 @@ export class DspEngine implements DspEngineContract {
         this.microphoneFilter = this.context!.createBiquadFilter();
         this.microphoneFilter.type = 'lowpass';
         this.microphoneGain = this.context!.createGain();
+        this.microphoneAnalyser = this.context!.createAnalyser();
+        this.microphoneAnalyser.fftSize = 8192;
         this.microphoneSource.connect(this.microphoneFilter);
         this.microphoneFilter.connect(this.microphoneGain);
+        this.microphoneGain.connect(this.microphoneAnalyser);
       }
       await this.context!.resume();
       this.syncInputRouting();
@@ -181,6 +186,7 @@ export class DspEngine implements DspEngineContract {
     this.microphoneSource = null;
     this.microphoneFilter = null;
     this.microphoneGain = null;
+    this.microphoneAnalyser = null;
     this.status = { ...this.status, source: this.sourceStatus() };
   }
 
@@ -316,6 +322,8 @@ export class DspEngine implements DspEngineContract {
     this.analyser.getFloatTimeDomainData(this.waveformData);
     const fftBinsDb = this.fftData.slice();
     const waveform = this.waveformData.slice();
+    let microphoneWaveform:Float32Array<ArrayBuffer>|undefined;
+    if(this.microphoneEnabledRuntime&&this.microphoneAnalyser){const samples=new Float32Array(this.microphoneAnalyser.fftSize);this.microphoneAnalyser.getFloatTimeDomainData(samples);microphoneWaveform=samples;}
     const fftBandsDb = this.fftBands(fftBinsDb);
     let cwtBandsDb: Float32Array<ArrayBuffer> | undefined;
     if (this.parameters.analysis === 'cwt') cwtBandsDb = this.cwtBands();
@@ -330,6 +338,7 @@ export class DspEngine implements DspEngineContract {
       fftBandsDb,
       cwtBandsDb,
       waveform,
+      microphoneWaveform,
       rms: Math.sqrt(energy / Math.max(1, waveform.length)),
     };
     this.latestFrame = frame;
