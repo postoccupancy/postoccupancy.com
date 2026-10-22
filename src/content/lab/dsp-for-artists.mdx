@@ -13,17 +13,3 @@ Move the sliders to see how these two properties change the wave.
 
 <WaveExplorer initialFrequency={3} initialAmplitude={0.65} />
 
-## Try it
-
-1. Increase the frequency. More cycles fit into the same one-second window.
-2. Reduce the amplitude. The wave gets shorter without changing its frequency.
-3. Set the amplitude to zero. The oscillation becomes a flat line.
-
-The curve follows this expression, where `t` is time in seconds:
-
-```js
-amplitude * Math.sin(2 * Math.PI * frequency * t)
-```
-
-This is a visual example: the frequencies are deliberately slow enough to count,
-and the explorer does not generate audio.
