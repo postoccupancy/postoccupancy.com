@@ -96,7 +96,7 @@ export function DocsShell({ children }: { children: ReactNode }) {
           <Menu sx={{ fontSize: 20 }} />
         </IconButton>
       </Tooltip>
-      <Box component="main" id="main-content" tabIndex={-1} sx={{ flex: 1, minWidth: 0, height: '100%', overflowY: 'auto', '&:focus': { outline: 'none' } }}>
+      <Box component="main" id="main-content" tabIndex={-1} sx={{ '--navigation-opener-offset': { xs: '48px', md: expanded ? '0px' : '48px' }, flex: 1, minWidth: 0, height: '100%', overflowY: 'auto', '&:focus': { outline: 'none' } }}>
         {children}
       </Box>
       <GlobalSettings open={settingsOpen} onClose={() => setSettingsOpen(false)} />

@@ -40,7 +40,7 @@ test('sections collapse and active sections reopen on history navigation', async
   await page.goBack();
   await expect(sensors).toHaveAttribute('aria-expanded', 'true');
   await expect(nav.getByRole('link', { name: 'Indoor Sky' })).toBeVisible();
-  await page.getByRole('link', { name: 'Post Occupancy', exact: true }).click();
+  await page.getByRole('link', { name: 'Post Occupancy Media', exact: true }).click();
   await expect(page).toHaveURL('/');
   await expect(page.getByRole('heading', { level: 1, name: 'DSP for Artists', exact: true })).toBeVisible();
   await expect(page).toHaveTitle('DSP for Artists | Post Occupancy Media');
