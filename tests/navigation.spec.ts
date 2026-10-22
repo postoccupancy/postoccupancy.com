@@ -12,7 +12,7 @@ test('all named routes render their title, breadcrumbs, and selected navigation'
   for (const entry of pages) {
     const response = await page.goto(entry.href);
     expect(response?.status()).toBe(200);
-    await expect(page).toHaveTitle(`${entry.title} | Post Occupancy`);
+    await expect(page).toHaveTitle(`${entry.title} | Post Occupancy Media`);
     const nav = page.getByRole('navigation', { name: 'Main navigation' });
     const breadcrumb = page.getByRole('navigation', { name: 'Breadcrumb', exact: true });
     await expect(nav.getByRole('link', { name: entry.title, exact: true })).toHaveAttribute('aria-current', 'page');
@@ -43,7 +43,7 @@ test('sections collapse and active sections reopen on history navigation', async
   await page.getByRole('link', { name: 'Post Occupancy', exact: true }).click();
   await expect(page).toHaveURL('/');
   await expect(page.getByRole('heading', { level: 1, name: 'DSP for Artists', exact: true })).toBeVisible();
-  await expect(page).toHaveTitle('DSP for Artists | Post Occupancy');
+  await expect(page).toHaveTitle('DSP for Artists | Post Occupancy Media');
   await expect(page.getByRole('navigation', { name: 'Breadcrumb', exact: true })).toHaveText('Lab/DSP for Artists');
   await expect(nav.getByRole('link', { name: 'DSP for Artists', exact: true })).toHaveAttribute('aria-current', 'page');
 });

@@ -6,7 +6,7 @@ import { DocsShell } from '@/layouts/docs/shell';
 import { Providers } from './providers';
 
 export const metadata: Metadata = {
-  title: 'Post Occupancy',
+  title: 'Post Occupancy Media',
   description: 'Documentation, instruments, and experiments in environmental sensing, sound, and software.',
 };
 

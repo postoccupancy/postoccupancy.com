@@ -9,7 +9,7 @@ import { getPage } from '@/content/site';
 import { lessons } from '@/lib/dsp-for-artists/course';
 
 const page = getPage('/');
-export const metadata: Metadata = { title: `${page.title} | Post Occupancy`, description: page.description };
+export const metadata: Metadata = { title: `${page.title} | Post Occupancy Media`, description: page.description };
 
 export default function Page() {
   return <DocsPage title={page.title} section="Lab">

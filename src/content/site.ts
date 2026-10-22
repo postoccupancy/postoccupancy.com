@@ -28,7 +28,7 @@ export const groups: NavigationGroup[] = [
   },
   {
     title: 'Interfaces', id: 'interfaces', items: [
-      { title: 'Electric Sea', href: '/interfaces/electric-sea', description: 'An interface to the live signal router connecting environmental signals across Post Occupancy.' },
+      { title: 'Electric Sea', href: '/interfaces/electric-sea', description: 'An interface to the live signal router connecting environmental signals across the Post Occupancy Media network.' },
       { title: 'Spectral Weather', href: '/interfaces/spectral-visualizer', description: 'Spectral views of selectable live signals.' },
       { title: 'Microphone', href: '/interfaces/microphone-visualizer', description: 'An interactive microphone visualization using p5 and Web Audio.' },
     ],

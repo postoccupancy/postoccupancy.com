@@ -48,7 +48,7 @@ export function DocsShell({ children }: { children: ReactNode }) {
       <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: 3, py: 3, gap: 1 }}>
           <Typography component={NextLink} href="/" onClick={() => setMobileOpen(false)} sx={{ color: 'text.primary', textDecoration: 'none', fontSize: 16, fontWeight: 600, letterSpacing: '-0.04em' }}>
-            Post Occupancy
+            Post Occupancy Media
           </Typography>
           <Tooltip title={mobile ? 'Close navigation' : 'Collapse navigation'}>
             <IconButton ref={mobile ? undefined : closer} aria-label={mobile ? 'Close navigation' : 'Collapse navigation'} onClick={mobile ? () => setMobileOpen(false) : collapse}>
