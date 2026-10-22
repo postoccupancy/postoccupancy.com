@@ -22,9 +22,32 @@ export const baseParameters:DspParameters={
 };
 export interface Lesson {slug:LessonSlug;number:number;title:string;summary:string;defaults:Partial<DspParameters>;exercises:string[]}
 export const lessons:Lesson[]=[
- {slug:'audio-processing',number:1,title:'Harmonics',summary:'See how sound becomes samples, spectra, and time-frequency images.',defaults:{mode:'stripes',analysis:'fft',oscillators:[{...oscillator('oscillator-1',110),waveform:'sine'}]},exercises:['Listen to the oscillator, then switch between FFT and CWT.','Compare logarithmic and linear frequency axes.','Try Low, Mid, and High filters, then enable the microphone.','Compare a live spectrum with its time-frequency history.']},
- {slug:'interference-patterns',number:2,title:'Interference',summary:'Combine traveling waves and inspect constructive and destructive interference.',defaults:{mode:'pressure',analysis:'fft',oscillators:[oscillator('oscillator-1',110,0),{...oscillator('oscillator-2',165,180),playing:false}]},exercises:['Change direction and phase without resetting propagation.','Compare Crest overlay with signed Pressure sum.','Tune the two oscillator frequencies to a simple ratio.','Find a geometry that produces a stable interference region.']},
- {slug:'make-some-art',number:3,title:'Sandbox',summary:'Use the complete instrument and save a restorable visual state.',defaults:{mode:'rings',analysis:'cwt',oscillators:[oscillator('oscillator-1',110),oscillator('oscillator-2',165,120),oscillator('oscillator-3',220,240)],rmsPulse:'thickness'},exercises:['Add or remove oscillators and change at least three controls.','Use RMS to connect broadband energy to color or thickness.','Copy a sketch link and reopen it.','Open a presentation window and make a full-screen composition.']},
+ {slug:'audio-processing',number:1,title:'Harmonics',summary:'Goal: see how all sounds are composed of pure sine waves.',defaults:{mode:'stripes',analysis:'fft',oscillators:[{...oscillator('oscillator-1',110),waveform:'sine'}]},
+ exercises:[
+    'You are now playing a single sine wave in Oscillator 1. Change its frequency and level. Unmute audio to hear the result.',
+    'Add a second sine wave. Change its frequency and level. Notice how the resulting waveform changes.',
+    'Turn off the second oscillator and change the waveform to sawtooth. Notice the smooth harmonic series -- a sawtooth wave is a synthesized sound computed as the combination of all harmonics from a fundamental tone.',
+    'Try adjusting the cutoff filter -- also known as a low-pass filter. This removes higher harmonics from the sound.',
+    'Turn off the oscillator and enable the microphone. Sing or whistle or speak -- what kind of waveform does it create? Do you see harmonics?',
+    'Notice how this visualization has only one axis. Amplitude is expressed as color intensity. The y-axis is up for grabs. Try changing the visualization to Radial.',
+    'Change the visualization to Time. Notice how the x-axis is now time and the y-axis is frequency. The color intensity represents amplitude.',
+]},
+ {slug:'interference-patterns',number:2,title:'Interference',summary:'Goal: see how waves combine in space.',defaults:{mode:'pressure',analysis:'fft',oscillators:[oscillator('oscillator-1',110,0),{...oscillator('oscillator-2',165,180),playing:false}]},
+ exercises:[
+    'Waveforms can also combine differently depending on their relationship in space. Watch this visualization of a sawtooth waveform as seen from above. Darker areas represent higher amplitude.', 
+    'Add a second sawtooth wave and change its direction between 180 and 0 degrees. Notice how the the resulting waveform changes for someone standing in the middle.',
+    'Try changing waveform shapes and angles to see how interference patterns vary.',
+    'Most sound sources emit pressure waves radially, rather than as parallel lines. Find the Layout selector under Layers and change to circle.',
+    'Try different methods of representing the interference. Change the blend mode to screen. Change the visualization to Crest.',
+]},
+ {slug:'make-some-art',number:3,title:'Sandbox',summary:'Goal: Use the complete instrument and save a restorable visual state.',defaults:{mode:'rings',analysis:'cwt',oscillators:[oscillator('oscillator-1',110),oscillator('oscillator-2',165,120),oscillator('oscillator-3',220,240)],rmsPulse:'thickness'},exercises:[
+    'Open the Expression control panel and try the Exposure control. This increases the intensity of peaks.',
+    'Turn on the mic and adjust the Noise gate. This removes signal below a certain amplitude level, such as background noise.',
+    'Try smoothness and persistence. These slow the rate of response to the incoming signal. This can be useful for creating a more stable image.',
+    'Try laying out the oscillators at different angles, such as evenly spaced, or at a fixed angle step.',
+    'Try the different blend modes and adjust other parameters to find sweet spots.',
+    'When you find a combination you like, find the Copy Sketch Link option in the top right and save it. You can restore this state later by pasting the URL into your browser.',
+]},
 ];
 export const lessonBySlug=(slug:string)=>lessons.find(lesson=>lesson.slug===slug);
 const options:Partial<Record<keyof DspParameters,readonly unknown[]>>={analysis:['fft','cwt'],spectrum:['raw','relative'],frequencyAxis:['log','linear'],mode:['stripes','rings','timeFrequency','crest','pressure'],blend:['multiply','add','maximum','blend','screen','planeMultiply'],palette:['spectral','mineral','temperature','mono'],rmsPulse:['off','thickness','opacity'],fftSize:[512,1024,2048,4096,8192,16384],layerLayout:['line','circle'],layerSource:['separate','combined'],angleDistribution:['even','fixed']};
