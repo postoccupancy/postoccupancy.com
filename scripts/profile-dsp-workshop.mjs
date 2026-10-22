@@ -12,10 +12,8 @@ async function measure(browser, baseURL) {
   await page.goto(`${baseURL}/lab/dsp-for-artists/audio-processing`, { waitUntil: 'domcontentloaded' });
   await page.locator('canvas[aria-label="stripes audio visualization"]').waitFor({ state: 'visible' });
   const loadMs = performance.now() - started;
-  const popupPromise = page.waitForEvent('popup');
-  await page.getByRole('button', { name: 'Open presentation window' }).click();
-  const presentation = await popupPromise;
-  await presentation.waitForLoadState('domcontentloaded');
+  const presentation = await context.newPage();
+  await presentation.goto(`${baseURL}/lab/dsp-for-artists/presentation?session=profile`, { waitUntil: 'domcontentloaded' });
   const fps = await page.locator('body').evaluate(() => new Promise(resolve => {
     let frames = 0;
     const start = performance.now();
@@ -26,7 +24,8 @@ async function measure(browser, baseURL) {
     };
     requestAnimationFrame(tick);
   }));
-  const slider = page.getByRole('slider', { name: 'Tone 1 frequency (Hz)' });
+  await page.locator('[data-control-section="oscillator-1"]').getByRole('button').click();
+  const slider = page.locator('[data-control-section="oscillator-1"]').getByRole('spinbutton', { name: 'Frequency precise value' });
   const latencies = [];
   for (const value of [120, 180, 240, 300, 360, 420, 480, 540, 600, 660]) {
     const before = performance.now();
