@@ -30,6 +30,8 @@ export interface DspAnalysisFrame {
   fftBandsDb: Float32Array<ArrayBuffer>;
   cwtBandsDb?: Float32Array<ArrayBuffer>;
   waveform: Float32Array<ArrayBuffer>;
+  /** Latest microphone analyser window for the responsive waveform strip. */
+  microphoneWaveform?: Float32Array<ArrayBuffer>;
   /** New, contiguous microphone samples captured since the preceding frame. */
   microphoneSamples?: Float32Array<ArrayBuffer>;
   rms: number;
@@ -333,9 +335,11 @@ export class DspEngine implements DspEngineContract {
     this.analyser.getFloatTimeDomainData(this.waveformData);
     const fftBinsDb = this.fftData.slice();
     const waveform = this.waveformData.slice();
+    let microphoneWaveform:Float32Array<ArrayBuffer>|undefined;
+    if(this.microphoneEnabledRuntime&&this.microphoneAnalyser){microphoneWaveform=new Float32Array(this.microphoneAnalyser.fftSize);this.microphoneAnalyser.getFloatTimeDomainData(microphoneWaveform);}
     let microphoneSamples:Float32Array<ArrayBuffer>|undefined;
     if(this.microphoneEnabledRuntime&&this.microphoneBlocks.length){const length=this.microphoneBlocks.reduce((sum,block)=>sum+block.length,0),samples=new Float32Array(length);let offset=0;for(const block of this.microphoneBlocks){samples.set(block,offset);offset+=block.length;}this.microphoneBlocks=[];microphoneSamples=samples;}
-    else if(this.microphoneEnabledRuntime&&this.microphoneAnalyser){const count=Math.min(this.microphoneAnalyser.fftSize,Math.round(this.context.sampleRate*DSP_ANALYSIS_INTERVAL_MS/1000)),window=new Float32Array(this.microphoneAnalyser.fftSize);this.microphoneAnalyser.getFloatTimeDomainData(window);microphoneSamples=window.slice(window.length-count);}
+    else if(microphoneWaveform){const count=Math.min(microphoneWaveform.length,Math.round(this.context.sampleRate*DSP_ANALYSIS_INTERVAL_MS/1000));microphoneSamples=microphoneWaveform.slice(microphoneWaveform.length-count);}
     const fftBandsDb = this.fftBands(fftBinsDb);
     let cwtBandsDb: Float32Array<ArrayBuffer> | undefined;
     if (this.parameters.analysis === 'cwt') cwtBandsDb = this.cwtBands();
@@ -350,6 +354,7 @@ export class DspEngine implements DspEngineContract {
       fftBandsDb,
       cwtBandsDb,
       waveform,
+      microphoneWaveform,
       microphoneSamples,
       rms: Math.sqrt(energy / Math.max(1, waveform.length)),
     };
