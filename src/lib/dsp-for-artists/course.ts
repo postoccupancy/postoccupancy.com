@@ -46,7 +46,7 @@ export const lessons:Lesson[]=[
     'Try smoothness and persistence. These slow the rate of response to the incoming signal. This can be useful for creating a more stable image.',
     'Try laying out the oscillators at different angles, such as evenly spaced, or at a fixed angle step.',
     'Try the different blend modes and adjust other parameters to find sweet spots.',
-    'When you find a combination you like, find the Copy Sketch Link option in the top right and save it. You can restore this state later by pasting the URL into your browser.',
+    'If you find a combination you like, find the Copy Sketch Link option in the top right and save it. You can restore this state later by pasting the URL into your browser.',
 ]},
 ];
 export const lessonBySlug=(slug:string)=>lessons.find(lesson=>lesson.slug===slug);
