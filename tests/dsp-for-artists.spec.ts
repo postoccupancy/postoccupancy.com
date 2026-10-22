@@ -88,7 +88,7 @@ test('lesson defaults set activation, visualization, orientation, and accordion 
   await page.goto('/lab/dsp-for-artists/audio-processing');
   await expect(page.getByRole('button',{name:'Visualization: Linear'})).toHaveAttribute('aria-pressed','true');
   await expect(page.locator('[data-control-section=microphone] .MuiAccordionDetails-root')).toBeVisible();
-  const harmonic=page.locator('[data-control-section=oscillator-1]');await expect(harmonic.locator('.MuiAccordionDetails-root')).toBeVisible();await expect(harmonic.getByRole('button',{name:'Pause'})).toBeVisible();await expect(harmonic.getByLabel('Direction precise value')).toHaveValue('0');
+  const harmonic=page.locator('[data-control-section=oscillator-1]');await expect(harmonic.locator('.MuiAccordionDetails-root')).toBeVisible();await expect(harmonic.getByRole('button',{name:'Pause'})).toBeVisible();await expect(harmonic.getByLabel('Direction precise value')).toHaveValue('0');await expect(harmonic.getByRole('combobox',{name:'Waveform'})).toHaveText(/sine/i);
   const microphone=page.locator('[data-control-section=microphone]');await expect(microphone.getByRole('button',{name:'Enable'})).toBeVisible();await expect(microphone.getByLabel('Direction precise value')).toHaveValue('0');
   await page.getByRole('link',{name:'Next'}).click();await expect(page.getByRole('button',{name:'Visualization: Pressure'})).toHaveAttribute('aria-pressed','true');
   await expect(page.locator('[data-control-section=microphone] .MuiAccordionDetails-root')).toBeHidden();
@@ -103,4 +103,13 @@ test('zero oscillators leaves a valid microphone-independent canvas',async({page
   await setOscillatorCount(page,0);await expect(page.getByRole('combobox',{name:'Oscillator count'})).toHaveText('0');await expect(page.locator('[data-control-section^=oscillator-]')).toHaveCount(0);await expect(page.locator('canvas')).toBeVisible();
   await expect.poll(async()=>(await metrics(page)).stops).toBeGreaterThan(0);
   const microphone=await expand(page,'microphone');await microphone.getByRole('button',{name:'Enable'}).click();await expect.poll(async()=>(await metrics(page)).microphones).toBe(1);await expect(page.locator('canvas')).toBeVisible();
+});
+
+test('wide and narrow canvases contain complete visual fields below the waveform',async({page})=>{
+  await installAudioMock(page);
+  for(const viewport of[{width:1440,height:900},{width:390,height:844}]){
+    await page.setViewportSize(viewport);await page.goto('/lab/dsp-for-artists/audio-processing');await page.getByRole('button',{name:'Unmute audio'}).click();if(viewport.width<1200)await page.getByRole('button',{name:'Controls'}).click();
+    const canvas=page.locator('canvas');await expect.poll(async()=>await canvas.getAttribute('data-visual-bounds')).not.toBeNull();
+    for(const mode of['Linear','Rings','Time'] as const){await selectSegment(page,`Visualization: ${mode}`);await expect.poll(async()=>await canvas.getAttribute('data-visual-bounds')).not.toBeNull();const result=await canvas.evaluate(node=>{const canvas=node as HTMLCanvasElement,rect=canvas.getBoundingClientRect(),values=(canvas.dataset.visualBounds??'').split(',').map(Number),pixel=canvas.getContext('2d')!.getImageData(Math.max(0,Math.floor(canvas.width-1)),Math.max(0,Math.floor(canvas.height/2)),1,1).data;return{rect:{width:rect.width,height:rect.height},x:values[0],y:values[1],side:values[2],right:values[0]+values[2],bottom:values[1]+values[3],edgeAlpha:pixel[3]}});expect(result.x).toBeGreaterThanOrEqual(0);expect(result.y).toBeGreaterThan(0);expect(result.right).toBeLessThanOrEqual(result.rect.width+.01);expect(result.bottom).toBeLessThanOrEqual(result.rect.height+.01);expect(result.side).toBeCloseTo(Math.min(result.rect.width,result.rect.height-result.y),0);expect(result.edgeAlpha).toBe(255)}
+  }
 });

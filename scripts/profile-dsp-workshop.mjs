@@ -24,8 +24,9 @@ async function measure(browser, baseURL) {
     };
     requestAnimationFrame(tick);
   }));
-  await page.locator('[data-control-section="oscillator-1"]').getByRole('button').click();
-  const slider = page.locator('[data-control-section="oscillator-1"]').getByRole('spinbutton', { name: 'Frequency precise value' });
+  const oscillator = page.locator('[data-control-section="oscillator-1"]');
+  if (await oscillator.locator('.MuiAccordionDetails-root').isHidden()) await oscillator.getByRole('button').first().click();
+  const slider = oscillator.getByRole('spinbutton', { name: 'Frequency precise value' });
   const latencies = [];
   for (const value of [120, 180, 240, 300, 360, 420, 480, 540, 600, 660]) {
     const before = performance.now();
