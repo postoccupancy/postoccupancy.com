@@ -35,6 +35,8 @@ export interface DspAnalysisFrame {
   /** New, contiguous microphone samples captured since the preceding frame. */
   microphoneSamples?: Float32Array<ArrayBuffer>;
   rms: number;
+  /** Wall-clock duration of the shared analysis pass, for diagnostics only. */
+  analysisDurationMs?: number;
 }
 
 export interface DspEngineStatus {
@@ -330,6 +332,7 @@ export class DspEngine implements DspEngineContract {
   }
 
   private analyze() {
+    const analysisStarted = performance.now();
     if (!this.context || !this.analyser || !this.cwtAnalyser || this.context.state !== 'running') return;
     if (this.fftData.length !== this.analyser.frequencyBinCount) this.fftData = new Float32Array(this.analyser.frequencyBinCount);
     if (this.waveformData.length !== this.analyser.fftSize) this.waveformData = new Float32Array(this.analyser.fftSize);
@@ -360,6 +363,7 @@ export class DspEngine implements DspEngineContract {
       microphoneSamples,
       rms: Math.sqrt(energy / Math.max(1, waveform.length)),
     };
+    frame.analysisDurationMs = performance.now() - analysisStarted;
     this.latestFrame = frame;
     for (const listener of this.listeners) listener(frame);
   }
