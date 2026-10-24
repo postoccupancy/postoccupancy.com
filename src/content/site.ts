@@ -35,6 +35,7 @@ export const groups: NavigationGroup[] = [
   },
   {
     title: 'Instruments', id: 'instruments', items: [
+      { title: 'Wave Interference', href: '/instruments/wave-interference', description: 'Microphone-driven spectral and plane-wave interference for exhibition display.' },
       { title: 'Signal Voices', href: '/instruments/resident-frequency', description: 'Live tracked environmental voices with browser audio and MIDI output.' },
       { title: 'Moire Patterns', href: '/instruments/processing-sketches', description: 'An interactive collection of signal-driven moire patterns.' },
     ],

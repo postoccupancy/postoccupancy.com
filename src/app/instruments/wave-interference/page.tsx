@@ -1,0 +1,2 @@
+import type {Metadata} from 'next';import {DocsPage} from '@/layouts/docs/page';import {getPage} from '@/content/site';import {WaveInterference} from '@/components/wave-interference/wave-interference';
+const page=getPage('/instruments/wave-interference');export const metadata:Metadata={title:`${page.title} | Post Occupancy Media`,description:page.description};export default function Page(){return <DocsPage title={page.title} section="Instruments" mode="viewport"><WaveInterference/></DocsPage>}

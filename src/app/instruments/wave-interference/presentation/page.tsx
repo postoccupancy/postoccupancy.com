@@ -1,0 +1,1 @@
+import type {Metadata} from 'next';import {Suspense} from 'react';import {WaveInterferencePresentation} from '@/components/wave-interference/presentation';export const metadata:Metadata={title:'Wave Interference — Presentation'};export default function Page(){return <Suspense fallback={null}><WaveInterferencePresentation/></Suspense>}

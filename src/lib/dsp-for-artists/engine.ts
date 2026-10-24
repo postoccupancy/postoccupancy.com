@@ -46,7 +46,7 @@ export interface DspEngineStatus {
 export interface DspEngineContract {
   configure(parameters: DspParameters, oscillators?: DspOscillatorConfig[]): void;
   start(): Promise<void>;
-  useMicrophone(): Promise<void>;
+  useMicrophone(options?: { deviceId?: string; channel?: number }): Promise<void>;
   disableMicrophone(): void;
   pause(paused: boolean): Promise<void>;
   subscribe(listener: (frame: DspAnalysisFrame) => void): () => void;
@@ -71,10 +71,7 @@ interface CwtKernel {
   scale: number;
 }
 
-const mediaConstraints: MediaStreamConstraints = {
-  audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
-  video: false,
-};
+const mediaConstraints=(deviceId?:string):MediaStreamConstraints=>({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:{ideal:8},...(deviceId?{deviceId:{exact:deviceId}}:{})},video:false});
 
 export function oscillatorsFromParameters(parameters: DspParameters): DspOscillatorConfig[] {
   return parameters.oscillators.map(item=>({id:item.id,frequency:item.frequency,waveform:item.waveform,level:Math.pow(10,item.levelDb/20)*.35,cutoff:item.cutoff,q:.707,generating:item.playing,analyzing:item.playing,audible:item.playing&&!parameters.monitorMuted}));
@@ -91,6 +88,7 @@ export class DspEngine implements DspEngineContract {
   private voices = new Map<string, OscillatorVoice>();
   private microphoneStream: MediaStream | null = null;
   private microphoneSource: MediaStreamAudioSourceNode | null = null;
+  private microphoneSplitter: ChannelSplitterNode | null = null;
   private microphoneFilter: BiquadFilterNode | null = null;
   private microphoneGain: GainNode | null = null;
   private microphoneAnalyser: AnalyserNode | null = null;
@@ -152,19 +150,21 @@ export class DspEngine implements DspEngineContract {
     }
   }
 
-  async useMicrophone() {
+  async useMicrophone(options: { deviceId?: string; channel?: number } = {}) {
     try {
       this.ensureGraph();
+      if(this.microphoneStream)this.disableMicrophone();
       this.microphoneEnabledRuntime = true;
       if (!this.microphoneStream) {
-        this.microphoneStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
+        this.microphoneStream = await navigator.mediaDevices.getUserMedia(mediaConstraints(options.deviceId));
         this.microphoneSource = this.context!.createMediaStreamSource(this.microphoneStream);
         this.microphoneFilter = this.context!.createBiquadFilter();
         this.microphoneFilter.type = 'lowpass';
         this.microphoneGain = this.context!.createGain();
         this.microphoneAnalyser = this.context!.createAnalyser();
         this.microphoneAnalyser.fftSize = 8192;
-        this.microphoneSource.connect(this.microphoneFilter);
+        const channel=Math.max(0,Math.min(31,Math.round(options.channel??0)));
+        if(options.channel!==undefined){this.microphoneSplitter=this.context!.createChannelSplitter(Math.max(2,channel+1));this.microphoneSource.connect(this.microphoneSplitter);this.microphoneSplitter.connect(this.microphoneFilter,channel,0);}else this.microphoneSource.connect(this.microphoneFilter);
         this.microphoneFilter.connect(this.microphoneGain);
         this.microphoneGain.connect(this.microphoneAnalyser);
         await this.installMicrophoneCapture();
@@ -186,11 +186,13 @@ export class DspEngine implements DspEngineContract {
     this.microphoneConnected = false;
     this.microphoneMonitorConnected = false;
     this.microphoneSource?.disconnect();
+    this.microphoneSplitter?.disconnect();
     this.microphoneFilter?.disconnect();
     this.microphoneGain?.disconnect();
     this.microphoneStream?.getTracks().forEach(track => track.stop());
     this.microphoneStream = null;
     this.microphoneSource = null;
+    this.microphoneSplitter = null;
     this.microphoneFilter = null;
     this.microphoneGain = null;
     this.microphoneAnalyser = null;
