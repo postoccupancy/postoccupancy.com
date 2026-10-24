@@ -8,8 +8,8 @@ export type WaveBlend='multiply'|'add'|'maximum'|'blend'|'screen';
 export interface WaveState{visualization:WaveVisualization;spectrum:WaveSpectrum;geometry:WaveGeometry;arrangement:WaveArrangement;layers:number;xSpacing:number;ySpacing:number;circleRadius:number;angleOffset:number;planeAngleOffset:number;rmsLuminosity:boolean;exposure:number;blend:WaveBlend;persistence:number}
 export const waveDefaults:WaveState={visualization:'fft',spectrum:'raw',geometry:'rings',arrangement:'circle',layers:3,xSpacing:0,ySpacing:0,circleRadius:400,angleOffset:0,planeAngleOffset:45,rmsLuminosity:true,exposure:25,blend:'multiply',persistence:0};
 export const wavePresets:{name:string;state:WaveState}[]=[
- {name:'FFT Lines',state:{...waveDefaults,visualization:'fft',geometry:'lines',arrangement:'line',blend:'multiply'}},
- {name:'FFT Rings',state:{...waveDefaults,visualization:'fft',geometry:'rings',arrangement:'circle',blend:'multiply'}},
+ {name:'FFT Lines',state:{...waveDefaults,visualization:'fft',spectrum:'raw',geometry:'lines',arrangement:'line',layers:8,xSpacing:0,ySpacing:0,exposure:40,blend:'multiply'}},
+ {name:'FFT Rings',state:{...waveDefaults,visualization:'fft',spectrum:'raw',geometry:'rings',arrangement:'line',layers:3,xSpacing:125,ySpacing:0,exposure:25,blend:'multiply'}},
  {name:'Plane Lines',state:{...waveDefaults,visualization:'plane',geometry:'lines',arrangement:'line',blend:'screen'}},
  {name:'Plane Rings',state:{...waveDefaults,visualization:'plane',geometry:'rings',arrangement:'circle',blend:'screen',circleRadius:570*Math.SQRT2/2}},
 ];
