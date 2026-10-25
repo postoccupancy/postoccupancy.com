@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { RouterClient } from '@/lib/signals/router-client';
 import { RouterInterface } from '@/lib/router/router-interface';
+import { DEFAULT_ROUTER_URL, readRouterUrl } from '@/lib/signals/router-url';
 
 const RouterContext = createContext<RouterClient | null>(null);
 const RouterInterfaceContext = createContext<RouterInterface | null>(null);
@@ -10,13 +11,19 @@ const RouterInterfaceContext = createContext<RouterInterface | null>(null);
 export function RouterProvider({ children }: { children: ReactNode }) {
   const [router] = useState(() => new RouterClient());
   const [routerInterface] = useState(() => new RouterInterface(router));
-  useEffect(() => router.connect(process.env.NEXT_PUBLIC_SIGNAL_ROUTER_URL || 'wss://rf.postoccupancy.com'), [router]);
+  useEffect(() => router.connect(readRouterUrl()), [router]);
   useEffect(() => routerInterface.start(), [routerInterface]);
   return (
     <RouterContext.Provider value={router}>
       <RouterInterfaceContext.Provider value={routerInterface}>{children}</RouterInterfaceContext.Provider>
     </RouterContext.Provider>
   );
+}
+
+// Address changes reload the page; this snapshot only needs hydration support.
+const subscribeRouterUrl = () => () => {};
+export function useRouterUrl() {
+  return useSyncExternalStore(subscribeRouterUrl, readRouterUrl, () => DEFAULT_ROUTER_URL);
 }
 
 export function useSignalRouter() {
