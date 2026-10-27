@@ -15,6 +15,7 @@ export interface ElectricSeaSnapshot {
   connection: RouterClient['status'];
   streams: string[];
   activeVoiceCount: number;
+  allocatedVoiceCount: number;
   oscillators: DspOscillator[];
 }
 
@@ -58,7 +59,7 @@ export class ElectricSeaSource {
     this.setTimer = options.setTimer ?? ((callback, delay) => setTimeout(callback, delay));
     this.clearTimer = options.clearTimer ?? (timer => clearTimeout(timer));
     this.lastConnection = router.status;
-    this.snapshot = { connection: router.status, streams: [], activeVoiceCount: 0, oscillators: [] };
+    this.snapshot = { connection: router.status, streams: [], activeVoiceCount: 0, allocatedVoiceCount: 0, oscillators: [] };
   }
 
   start() {
@@ -144,6 +145,11 @@ export class ElectricSeaSource {
       .filter(([streamId]) => this.settings.streamId === 'all' || streamId === this.settings.streamId)
       .flatMap(([, stream]) => stream.voices);
     const allocation = this.allocator.update(voices, this.settings.maximumVoices);
+    const eligiblePerDevice = new Map<string, number>();
+    for (const voice of voices) if (voice.active && voice.frequencyHz > 0 && Number.isFinite(voice.confidence)) {
+      const device = residentDevice(voice.streamId);
+      eligiblePerDevice.set(device, (eligiblePerDevice.get(device) ?? 0) + 1);
+    }
     const oscillators = allocation.allocated.map(({ key, slot, voice }) => {
       const pitch = mapEnvironmentalPitch(voice.frequencyHz, {
         baseMidiNote: this.settings.baseMidiNote,
@@ -151,9 +157,12 @@ export class ElectricSeaSource {
         mode: this.settings.pitchMode,
       });
       const confidence = Math.max(0.001, Math.min(1, voice.confidence));
+      const sourceAmplitude = Math.max(0.015, Math.min(0.22, 0.18 * confidence))
+        / Math.pow(eligiblePerDevice.get(residentDevice(voice.streamId)) ?? 1, 0.35);
       return {
         id: `electric-sea-${slot + 1}`,
         sourceVoiceKey: key,
+        sourceAmplitude,
         playing: true,
         waveform: 'sine' as const,
         frequency: pitch.oscillatorFrequencyHz,
@@ -167,7 +176,8 @@ export class ElectricSeaSource {
     this.snapshot = {
       connection: this.router.status,
       streams,
-      activeVoiceCount: allocation.allocated.length,
+      activeVoiceCount: allocation.activeVoiceCount,
+      allocatedVoiceCount: allocation.allocated.length,
       oscillators,
     };
     this.listeners.forEach(listener => listener());
@@ -195,4 +205,8 @@ function normalizeVoice(streamId: string, value: unknown): IncomingVoice | null 
 
 function finite(value: number, fallback: number, minimum: number, maximum: number) {
   return Number.isFinite(value) ? Math.max(minimum, Math.min(maximum, Math.round(value))) : fallback;
+}
+
+function residentDevice(streamId: string) {
+  return streamId.split('/')[1] || streamId;
 }

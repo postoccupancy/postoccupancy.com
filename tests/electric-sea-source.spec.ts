@@ -47,19 +47,19 @@ test('Electric Sea source maps live voices while retaining independent stream sn
   router.message(resident('osc/indoor-sky/temperature', [1]));
   router.message(resident('osc/electric-sky/rms', [1]));
   expect(source.getSnapshot()).toMatchObject({
-    connection: 'connected', activeVoiceCount: 2,
+    connection: 'connected', activeVoiceCount: 2, allocatedVoiceCount: 2,
     streams: ['osc/electric-sky/rms', 'osc/indoor-sky/temperature'],
   });
   expect(source.getSnapshot().oscillators[0]).toMatchObject({
     id: 'electric-sea-1', sourceVoiceKey: 'osc/indoor-sky/temperature::1',
-    frequency: 130.8127826502993, waveform: 'sine', direction: 0,
+    frequency: 130.8127826502993, waveform: 'sine', direction: 0, sourceAmplitude: 0.144,
   });
 
   router.message(resident('osc/indoor-sky/temperature', [], false));
   expect(source.getSnapshot().activeVoiceCount).toBe(1);
   expect(source.getSnapshot().streams).toHaveLength(2);
   source.configure({ ...defaultElectricSeaSettings, maximumVoices: 0 });
-  expect(source.getSnapshot().activeVoiceCount).toBe(0);
+  expect(source.getSnapshot()).toMatchObject({ activeVoiceCount: 1, allocatedVoiceCount: 0 });
   source.stop();
   expect(router.sent.at(-1)).toEqual({ type: 'resident_subscribe', enabled: false });
   expect(source.getSnapshot().streams).toEqual([]);
@@ -75,12 +75,25 @@ test('Electric Sea source filters streams, quantizes pitch, and clears on discon
     ...defaultElectricSeaSettings,
     streamId: 'osc/indoor-sky/temperature', maximumVoices: 1, pitchMode: 'quantized',
   });
-  expect(source.getSnapshot().activeVoiceCount).toBe(1);
+  expect(source.getSnapshot()).toMatchObject({ activeVoiceCount: 2, allocatedVoiceCount: 1 });
   expect(source.getSnapshot().oscillators[0].frequency).toBeCloseTo(130.8127826502993, 10);
   router.connection('reconnecting');
-  expect(source.getSnapshot()).toMatchObject({ connection: 'reconnecting', activeVoiceCount: 0, streams: [] });
+  expect(source.getSnapshot()).toMatchObject({ connection: 'reconnecting', activeVoiceCount: 0, allocatedVoiceCount: 0, streams: [] });
   router.connection('connected');
   expect(router.sent.filter(message => message.enabled === true)).toHaveLength(2);
+});
+
+test('Electric Sea source reports eligible and allocated counts and applies SC per-device normalization', () => {
+  const router = new FakeRouter();
+  const source = new ElectricSeaSource(router as unknown as RouterClient, { schedule: callback => callback() });
+  source.start();
+  router.message(resident('osc/shared/temperature', [1, 2]));
+  router.message(resident('osc/shared/humidity', [1, 2]));
+  source.configure({ ...defaultElectricSeaSettings, maximumVoices: 3 });
+  const snapshot = source.getSnapshot();
+  expect(snapshot).toMatchObject({ activeVoiceCount: 4, allocatedVoiceCount: 3 });
+  expect(snapshot.oscillators[0].sourceAmplitude).toBeCloseTo(0.144 / Math.pow(4, 0.35), 10);
+  source.stop();
 });
 
 test('Electric Sea source releases only the stream whose stale timer expires', () => {
