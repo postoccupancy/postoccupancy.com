@@ -7,9 +7,10 @@ const clamp=(value:number,low=0,high=1)=>Math.max(low,Math.min(high,Number.isFin
 const stops=[[5,9,25],[25,35,100],[20,135,170],[225,185,70],[255,225,135]];
 const frequencyPalette=['#C88872','#D4C5A0','#83B7A4','#3A8C99','#236781','#183B58'];
 const rgb=(hex:string)=>[1,3,5].map(offset=>parseInt(hex.slice(offset,offset+2),16));
+const frequencyRgb=frequencyPalette.map(rgb),FREQUENCY_COLOR_STEPS=1023,frequencyColorLut=Uint32Array.from({length:FREQUENCY_COLOR_STEPS+1},(_,index)=>{const scaled=index/FREQUENCY_COLOR_STEPS*(frequencyRgb.length-1),left=Math.min(frequencyRgb.length-2,Math.floor(scaled)),fraction=scaled-left,a=frequencyRgb[left],b=frequencyRgb[left+1],r=Math.round(a[0]+(b[0]-a[0])*fraction),g=Math.round(a[1]+(b[1]-a[1])*fraction),blue=Math.round(a[2]+(b[2]-a[2])*fraction);return(r<<16)|(g<<8)|blue;});
 function colorAt(value:number){const position=clamp(value)*.999999*4,index=Math.floor(position),fraction=position-index;return stops[index].map((component,channel)=>Math.round(component+(stops[index+1][channel]-component)*fraction));}
 function frequencyColorPosition(hz:number){return clamp(Math.log(Math.max(MIN_HZ,hz)/MIN_HZ)/Math.log(MAX_HZ/MIN_HZ));}
-function frequencyColor(position:number){const scaled=clamp(position)*.999999*(frequencyPalette.length-1),left=Math.floor(scaled),fraction=scaled-left,a=rgb(frequencyPalette[left]),b=rgb(frequencyPalette[left+1]);return a.map((value,channel)=>value+(b[channel]-value)*fraction);}
+function frequencyColor(position:number){return frequencyColorLut[Math.round(clamp(position)*FREQUENCY_COLOR_STEPS)];}
 
 interface History{t:number;amp:number;phase:number;waveNumber:number;colorPosition:number}
 interface PlaneBand{low:number;high:number;minCycles:number;maxCycles:number;amp:number;hz:number;tracked:number|null;candidate:number|null;candidateFrames:number;missingFrames:number;phase:number;history:History[];sourceKey?:string;slot?:number;layoutIndex?:number;layoutCount?:number;active?:boolean;releasedAt?:number;fftHz?:number;fftTargetHz?:number;fftAmp?:number;fftTargetAmp?:number}
@@ -47,12 +48,12 @@ export class WaveInterferenceRenderer{
   this.fillLookups();
   const bands=this.renderBands(),pixels=this.planeImage.data,screen=this.state.blend==='screen',edge=this.state.blend==='edge',colors=bands.map(band=>frequencyColor(frequencyColorPosition(band.hz))),amplitudeDivisor=this.environmental?1:Math.max(1,bands.length);
   this.canvas.dataset.planeAmplitudeDivisor=String(amplitudeDivisor);
-  this.canvas.dataset.planeLayerColors=colors.map(color=>color.map(value=>Math.round(value)).join(',')).join('|');
+  this.canvas.dataset.planeLayerColors=colors.map(color=>`${color>>16},${color>>8&255},${color&255}`).join('|');
   for(let pixel=0;pixel<PLANE_SIZE*PLANE_SIZE;pixel++){
    let sum=0,weight=0,cr=0,cg=0,cb=0;
    for(let layer=0;layer<this.geometryCache.length;layer++){
     const geometry=this.geometryCache[layer],index=geometry.indices[pixel],fraction=geometry.fractions[pixel],sourceAmp=geometry.lookupAmp[index]+(geometry.lookupAmp[index+1]-geometry.lookupAmp[index])*fraction,amp=this.environmental?clamp(sourceAmp+(this.state.exposure-25)/54):sourceAmp,phase=geometry.lookupPhase[index]+(geometry.lookupPhase[index+1]-geometry.lookupPhase[index])*fraction,waveNumber=geometry.lookupWaveNumber[index]+(geometry.lookupWaveNumber[index+1]-geometry.lookupWaveNumber[index])*fraction,colorLookup=geometry.lookupColorPosition!,colorPosition=colorLookup[index]+(colorLookup[index+1]-colorLookup[index])*fraction,value=amp*Math.cos(phase+waveNumber*geometry.phaseDistance),amount=Math.abs(value),color=frequencyColor(colorPosition);
-    sum+=value;weight+=amount;cr+=amount*color[0];cg+=amount*color[1];cb+=amount*color[2];
+    sum+=value;weight+=amount;cr+=amount*(color>>16);cg+=amount*(color>>8&255);cb+=amount*(color&255);
    }
    const normalized=clamp(sum/amplitudeDivisor,-1,1),colorPulse=this.state.rmsLuminosity?this.pulseEnvelope*2:0,gray=127.5+127.5*normalized,rHue=weight>1e-8?cr/weight:127.5,gHue=weight>1e-8?cg/weight:127.5,bHue=weight>1e-8?cb/weight:127.5,rMix=rHue/255,gMix=gHue/255,bMix=bHue/255,average=(rMix+gMix+bMix)/3,chroma=1.5;
    if(edge)this.edgePressure[pixel]=normalized;
