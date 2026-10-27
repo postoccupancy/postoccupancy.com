@@ -3,7 +3,7 @@ export type LessonSlug = (typeof lessonSlugs)[number];
 export type DspMode = 'stripes' | 'rings' | 'timeFrequency' | 'crest' | 'pressure';
 export type BandFilter = 'raw' | 'low' | 'mid' | 'high';
 
-export interface DspOscillator { id:string;playing:boolean;waveform:OscillatorType;frequency:number;levelDb:number;cutoff:number;direction:number;phase:number;band:BandFilter }
+export interface DspOscillator { id:string;playing:boolean;waveform:OscillatorType;frequency:number;levelDb:number;cutoff:number;direction:number;phase:number;band:BandFilter;sourceVoiceKey?:string }
 export interface DspMicrophone { enabled:boolean;gainDb:number;cutoff:number;direction:number;analyzing:boolean;monitoring:boolean }
 export interface DspParameters {
  oscillators:DspOscillator[];microphone:DspMicrophone;monitorMuted:boolean;

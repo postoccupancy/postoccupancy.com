@@ -27,9 +27,17 @@ export const defaultElectricSeaSettings: ElectricSeaSettings = {
 };
 
 type Schedule = (callback: () => void) => void;
+type Timer = ReturnType<typeof setTimeout>;
+interface SourceOptions {
+  schedule?: Schedule;
+  staleAfterMs?: number;
+  setTimer?: (callback: () => void, delay: number) => Timer;
+  clearTimer?: (timer: Timer) => void;
+}
+interface StreamSnapshot { voices: IncomingVoice[]; staleTimer: Timer }
 
 export class ElectricSeaSource {
-  private snapshots = new Map<string, IncomingVoice[]>();
+  private snapshots = new Map<string, StreamSnapshot>();
   private allocator = new VoiceAllocator();
   private listeners = new Set<() => void>();
   private settings = defaultElectricSeaSettings;
@@ -37,9 +45,18 @@ export class ElectricSeaSource {
   private pending = false;
   private unsubscribeMessages: (() => void) | null = null;
   private unsubscribeStatus: (() => void) | null = null;
+  private releaseResidentSubscription: (() => void) | null = null;
   private lastConnection: RouterClient['status'];
+  private schedule: Schedule;
+  private staleAfterMs: number;
+  private setTimer: (callback: () => void, delay: number) => Timer;
+  private clearTimer: (timer: Timer) => void;
 
-  constructor(private router: RouterClient, private schedule: Schedule = callback => requestAnimationFrame(callback)) {
+  constructor(private router: RouterClient, options: SourceOptions = {}) {
+    this.schedule = options.schedule ?? (callback => requestAnimationFrame(callback));
+    this.staleAfterMs = options.staleAfterMs ?? 30_000;
+    this.setTimer = options.setTimer ?? ((callback, delay) => setTimeout(callback, delay));
+    this.clearTimer = options.clearTimer ?? (timer => clearTimeout(timer));
     this.lastConnection = router.status;
     this.snapshot = { connection: router.status, streams: [], activeVoiceCount: 0, oscillators: [] };
   }
@@ -48,7 +65,7 @@ export class ElectricSeaSource {
     if (this.unsubscribeMessages) return () => this.stop();
     this.unsubscribeMessages = this.router.subscribeMessages(this.receive);
     this.unsubscribeStatus = this.router.subscribe(this.syncConnection);
-    if (this.router.status === 'connected') this.router.send({ type: 'resident_subscribe', enabled: true });
+    this.releaseResidentSubscription = this.router.acquireResidentSubscription();
     this.publishNow();
     return () => this.stop();
   }
@@ -57,8 +74,9 @@ export class ElectricSeaSource {
     this.unsubscribeMessages?.();
     this.unsubscribeStatus?.();
     this.unsubscribeMessages = this.unsubscribeStatus = null;
-    this.router.send({ type: 'resident_subscribe', enabled: false });
-    this.snapshots.clear();
+    this.releaseResidentSubscription?.();
+    this.releaseResidentSubscription = null;
+    this.clearSnapshots();
     this.allocator.reset();
     this.publishNow();
   }
@@ -86,7 +104,16 @@ export class ElectricSeaSource {
     const voices = message.ready === true && Array.isArray(message.voices)
       ? message.voices.map(voice => normalizeVoice(message.device as string, voice)).filter((voice): voice is IncomingVoice => voice !== null)
       : [];
-    this.snapshots.set(message.device, voices);
+    const streamId = message.device;
+    const previous = this.snapshots.get(streamId);
+    if (previous) this.clearTimer(previous.staleTimer);
+    const staleTimer = this.setTimer(() => {
+      const current = this.snapshots.get(streamId);
+      if (!current || current.staleTimer !== staleTimer) return;
+      this.snapshots.delete(streamId);
+      this.publishNow();
+    }, this.staleAfterMs);
+    this.snapshots.set(streamId, { voices, staleTimer });
     this.queuePublish();
   };
 
@@ -94,10 +121,10 @@ export class ElectricSeaSource {
     if (this.router.status === this.lastConnection) return;
     this.lastConnection = this.router.status;
     if (this.router.status !== 'connected') {
-      this.snapshots.clear();
+      this.clearSnapshots();
       this.allocator.reset();
-    } else {
-      this.router.send({ type: 'resident_subscribe', enabled: true });
+      this.publishNow();
+      return;
     }
     this.queuePublish();
   };
@@ -115,9 +142,9 @@ export class ElectricSeaSource {
     const streams = [...this.snapshots.keys()].sort();
     const voices = [...this.snapshots.entries()]
       .filter(([streamId]) => this.settings.streamId === 'all' || streamId === this.settings.streamId)
-      .flatMap(([, streamVoices]) => streamVoices);
+      .flatMap(([, stream]) => stream.voices);
     const allocation = this.allocator.update(voices, this.settings.maximumVoices);
-    const oscillators = allocation.allocated.map(({ slot, voice }) => {
+    const oscillators = allocation.allocated.map(({ key, slot, voice }) => {
       const pitch = mapEnvironmentalPitch(voice.frequencyHz, {
         baseMidiNote: this.settings.baseMidiNote,
         pitchSpanSemitones: this.settings.pitchSpanSemitones,
@@ -126,6 +153,7 @@ export class ElectricSeaSource {
       const confidence = Math.max(0.001, Math.min(1, voice.confidence));
       return {
         id: `electric-sea-${slot + 1}`,
+        sourceVoiceKey: key,
         playing: true,
         waveform: 'sine' as const,
         frequency: pitch.oscillatorFrequencyHz,
@@ -143,6 +171,11 @@ export class ElectricSeaSource {
       oscillators,
     };
     this.listeners.forEach(listener => listener());
+  }
+
+  private clearSnapshots() {
+    for (const stream of this.snapshots.values()) this.clearTimer(stream.staleTimer);
+    this.snapshots.clear();
   }
 }
 

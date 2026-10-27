@@ -145,10 +145,12 @@ test('Electric Sea input combines stream snapshots, limits voices, restores manu
   await page.routeWebSocket('wss://rf.postoccupancy.com',ws=>{socket=ws;ws.onMessage(raw=>commands.push(JSON.parse(String(raw))))});
   await page.goto('/lab/dsp-for-artists/audio-processing');
   const input=page.locator('[data-control-section=input]');
+  await expect(page.getByRole('button',{name:'Unmute audio'})).toBeVisible();
   await input.getByRole('button',{name:'Input: Electric Sea'}).click();
   socket.send(JSON.stringify({type:'resident_voices',device:'osc/indoor-sky/temperature',ready:true,voices:[{id:1,active:true,frequencyHz:.05,confidence:.8}]}));
   socket.send(JSON.stringify({type:'resident_voices',device:'osc/electric-sky/rms',ready:true,voices:[{id:1,active:true,frequencyHz:.1,confidence:.7}]}));
   await expect(input.getByRole('status')).toContainText('Connected · 2 active voices');
+  await expect(page.getByRole('button',{name:'Unmute audio'})).toBeVisible();
   await input.getByRole('combobox',{name:'Device / stream'}).click();
   await expect(page.getByRole('option',{name:'osc/indoor-sky/temperature'})).toBeVisible();
   await expect(page.getByRole('option',{name:'osc/electric-sky/rms'})).toBeVisible();

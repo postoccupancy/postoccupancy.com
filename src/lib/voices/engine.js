@@ -909,6 +909,7 @@ export function mountVoices(root, router) {
     renderAll();
     updateOutputAvailability();
   }
+  const releaseResidentSubscription = router.acquireResidentSubscription();
   const unsubscribe = router.subscribeMessages(data => {
     if (data instanceof ArrayBuffer) return;
     if (data.type === 'resident_voices' && typeof data.device === 'string') {
@@ -933,10 +934,6 @@ export function mountVoices(root, router) {
     silence();
     lastResidentAt = performance.now();
     status.textContent = router.status === 'connected' ? 'Connected · waiting for analysis' : 'Router ' + router.status;
-    if (router.status === 'connected') router.send({
-      type: 'resident_subscribe',
-      enabled: true
-    });
   };
   const unsubscribeStatus = router.subscribe(syncConnection);
   syncConnection();
@@ -953,10 +950,7 @@ export function mountVoices(root, router) {
     unsubscribe();
     unsubscribeStatus();
     window.removeEventListener('pagehide', silence);
-    router.send({
-      type: 'resident_subscribe',
-      enabled: false
-    });
+    releaseResidentSubscription();
     panicMidi();
     disposed = true;
     midiGeneration++;
