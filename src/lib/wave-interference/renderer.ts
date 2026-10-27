@@ -43,7 +43,7 @@ export class WaveInterferenceRenderer{
  private fillLookups(){this.ensureGeometry();const bands=this.renderBands();for(let layer=0;layer<bands.length;layer++){const band=bands[layer],geometry=this.geometryCache[layer];for(let distance=0;distance<MAX_TRAVEL;distance++){const value=this.historyAt(band,this.elapsed-distance/VISUAL_SPEED);geometry.lookupAmp[distance]=value.amp;geometry.lookupPhase[distance]=value.phase;geometry.lookupWaveNumber[distance]=value.waveNumber;}}}
  private renderPlane(){
   this.fillLookups();
-  const bands=this.renderBands(),pixels=this.planeImage.data,screen=this.state.blend==='screen',colors=bands.map((band,index)=>{
+  const bands=this.renderBands(),pixels=this.planeImage.data,screen=this.state.blend==='screen',edge=this.state.blend==='edge',colors=bands.map((band,index)=>{
    if(this.environmental)return rgb(palette[(band.slot??index)%palette.length]);
    const position=clamp(Math.log(Math.sqrt(band.low*band.high)/80)/Math.log(6000/80))*7,left=Math.min(6,Math.floor(position)),fraction=position-left,a=rgb(palette[left]),b=rgb(palette[left+1]);
    return a.map((value,channel)=>value+(b[channel]-value)*fraction);
@@ -58,7 +58,8 @@ export class WaveInterferenceRenderer{
    }
    const normalized=clamp(sum/amplitudeDivisor,-1,1),colorPulse=this.state.rmsLuminosity?this.pulseEnvelope*2:0,gray=127.5+127.5*normalized,rHue=weight>1e-8?cr/weight:127.5,gHue=weight>1e-8?cg/weight:127.5,bHue=weight>1e-8?cb/weight:127.5,rMix=rHue/255,gMix=gHue/255,bMix=bHue/255,average=(rMix+gMix+bMix)/3,chroma=1.5;
    let r:number,g:number,b:number;
-   if(screen){const light=clamp(Math.max(0,normalized)*(1+colorPulse));r=255*light*clamp(average+(rMix-average)*chroma);g=255*light*clamp(average+(gMix-average)*chroma);b=255*light*clamp(average+(bMix-average)*chroma);}
+   if(edge)r=g=b=normalized>=0?255:0;
+   else if(screen){const light=clamp(Math.max(0,normalized)*(1+colorPulse));r=255*light*clamp(average+(rMix-average)*chroma);g=255*light*clamp(average+(gMix-average)*chroma);b=255*light*clamp(average+(bMix-average)*chroma);}
    else{const denominator=Math.max(.15,average),base=clamp(gray+(gray-127.5)*colorPulse,0,255);r=clamp(base*(1+chroma*(rMix/denominator-1)),0,255);g=clamp(base*(1+chroma*(gMix/denominator-1)),0,255);b=clamp(base*(1+chroma*(bMix/denominator-1)),0,255);}
    const offset=pixel*4;pixels[offset]=Math.round(r);pixels[offset+1]=Math.round(g);pixels[offset+2]=Math.round(b);pixels[offset+3]=255;
   }
