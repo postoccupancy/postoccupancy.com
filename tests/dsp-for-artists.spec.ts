@@ -140,6 +140,12 @@ test('wide and narrow canvases contain complete visual fields below the waveform
   }
 });
 
+test('DSP rendering caps its internal raster and reuses cached spectrum geometry',async({page})=>{
+  await installAudioMock(page);await page.setViewportSize({width:1440,height:900});await page.goto('/lab/dsp-for-artists/audio-processing');await page.getByRole('button',{name:'Unmute audio'}).click();const canvas=page.locator('canvas');
+  await expect.poll(()=>canvas.getAttribute('data-internal-raster')).toBe('480x480');await expect.poll(async()=>Number(await canvas.getAttribute('data-spectrum-geometry-builds'))).toBeGreaterThan(0);const builds=Number(await canvas.getAttribute('data-spectrum-geometry-builds'));await page.waitForTimeout(180);expect(Number(await canvas.getAttribute('data-spectrum-geometry-builds'))).toBe(builds);
+  await selectSegment(page,'Visualization: Rings');await expect.poll(async()=>Number(await canvas.getAttribute('data-spectrum-geometry-builds'))).toBeGreaterThan(builds);await expect(canvas).toHaveAttribute('data-internal-raster','480x480');
+});
+
 test('Electric Sea input combines stream snapshots, limits voices, restores manual state, and cleans up',async({page})=>{
   let socket!:WebSocketRoute;const commands:Array<Record<string,unknown>>=[];
   await page.routeWebSocket('wss://rf.postoccupancy.com',ws=>{socket=ws;ws.onMessage(raw=>commands.push(JSON.parse(String(raw))))});
