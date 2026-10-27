@@ -123,6 +123,7 @@ class PlaneState {
   private microphoneWrite=0;
   private microphoneOldest=0;
   private microphonePlayhead=0;
+  private microphoneTarget=0;
   private microphoneRate=48000;
   private microphoneReference=.02;
   private compositeRange:[number,number]=[0,0];
@@ -130,7 +131,9 @@ class PlaneState {
   constructor(){this.canvas.width=this.size;this.canvas.height=this.size;this.context=this.canvas.getContext('2d',{alpha:false})!;}
   resize(size:number){if(size===this.size)return;this.size=size;this.canvas.width=size;this.canvas.height=size;this.context=this.canvas.getContext('2d',{alpha:false})!;this.imageData=null;}
 
-  push(frame:DspAnalysisFrame,parameters:DspParameters){const dt=this.previous?Math.min(.1,Math.max(.001,(frame.timestamp-this.previous)/1000)):.05;this.previous=frame.timestamp;this.elapsed+=dt*PLANE_PLAYBACK_RATE;const target=clamp(frame.rms/.075),tau=target>this.pulseEnvelope?.045:.3;this.pulseEnvelope+=(target-this.pulseEnvelope)*(1-Math.exp(-dt/tau));if(!parameters.microphone.enabled){this.microphoneWrite=this.microphoneOldest=this.microphonePlayhead=0;this.microphoneReference=.02;return;}const microphone=frame.microphoneSamples;if(microphone?.length){if(frame.sampleRate!==this.microphoneRate){this.microphoneRate=frame.sampleRate;this.microphoneHistory=new Float32Array(Math.round(frame.sampleRate*8));this.microphoneWrite=this.microphoneOldest=this.microphonePlayhead=0;}let energy=0,peak=0;for(const sample of microphone){energy+=sample*sample;peak=Math.max(peak,Math.abs(sample));this.microphoneHistory[this.microphoneWrite%this.microphoneHistory.length]=sample;this.microphoneWrite++;if(this.microphoneWrite-this.microphoneOldest>this.microphoneHistory.length)this.microphoneOldest++;}const rms=Math.sqrt(energy/microphone.length),level=Math.max(rms*2.5,peak*.35),silent=level<.0015,envelopeTarget=silent?.02:Math.max(.006,level),envelopeTau=silent?.12:envelopeTarget>this.microphoneReference?.025:.35;this.microphoneReference+=(envelopeTarget-this.microphoneReference)*(1-Math.exp(-dt/envelopeTau));this.microphonePlayhead=this.microphoneWrite-2;}}
+  push(frame:DspAnalysisFrame,parameters:DspParameters){const dt=this.previous?Math.min(.1,Math.max(.001,(frame.timestamp-this.previous)/1000)):.05;this.previous=frame.timestamp;const target=clamp(frame.rms/.075),tau=target>this.pulseEnvelope?.045:.3;this.pulseEnvelope+=(target-this.pulseEnvelope)*(1-Math.exp(-dt/tau));if(!parameters.microphone.enabled){this.microphoneWrite=this.microphoneOldest=this.microphonePlayhead=this.microphoneTarget=0;this.microphoneReference=.02;return;}const microphone=frame.microphoneSamples;if(microphone?.length){if(frame.sampleRate!==this.microphoneRate){this.microphoneRate=frame.sampleRate;this.microphoneHistory=new Float32Array(Math.round(frame.sampleRate*8));this.microphoneWrite=this.microphoneOldest=this.microphonePlayhead=this.microphoneTarget=0;}let energy=0,peak=0;for(const sample of microphone){energy+=sample*sample;peak=Math.max(peak,Math.abs(sample));this.microphoneHistory[this.microphoneWrite%this.microphoneHistory.length]=sample;this.microphoneWrite++;if(this.microphoneWrite-this.microphoneOldest>this.microphoneHistory.length)this.microphoneOldest++;}const rms=Math.sqrt(energy/microphone.length),level=Math.max(rms*2.5,peak*.35),silent=level<.0015,envelopeTarget=silent?.02:Math.max(.006,level),envelopeTau=silent?.12:envelopeTarget>this.microphoneReference?.025:.35;this.microphoneReference+=(envelopeTarget-this.microphoneReference)*(1-Math.exp(-dt/envelopeTau));this.microphoneTarget=this.microphoneWrite-2;if(!this.microphonePlayhead)this.microphonePlayhead=this.microphoneTarget;}}
+
+  advance(dt:number){const step=Math.min(.1,Math.max(0,dt));this.elapsed+=step*PLANE_PLAYBACK_RATE;if(!this.microphoneTarget)return;const maximumLag=this.microphoneRate*.08;if(this.microphoneTarget-this.microphonePlayhead>maximumLag)this.microphonePlayhead=this.microphoneTarget-maximumLag;this.microphonePlayhead=Math.min(this.microphoneTarget,this.microphonePlayhead+step*this.microphoneRate);}
 
   render(parameters:DspParameters){const size=this.size,ctx=this.context,sources=this.sources(parameters);ctx.fillStyle='#fff';ctx.fillRect(0,0,size,size);if(!this.imageData)this.imageData=ctx.createImageData(size,size);const pixels=this.imageData.data,screen=parameters.palette!=='mono'&&parameters.blend==='screen',pulse=this.pulseEnvelope*parameters.rmsPulseDepth,colorPulse=parameters.rmsLuminosity?this.pulseEnvelope*parameters.colorPulseDepth:0,gain=Math.pow(10,parameters.exposure/40),states=sources.map((source,index)=>({source,color:this.sourceColor(index,sources.length,parameters.palette),geometry:this.geometry(source,parameters),amplitude:this.sourceAmplitude(source)})),totalAmplitude=states.reduce((total,state)=>total+state.amplitude,0),combinedColor=this.sourceColor(0,1,parameters.palette),samples=new Float32Array(states.length);let minimum=Infinity,maximum=-Infinity;
     for(let pixel=0;pixel<size*size;pixel++){const y=Math.floor(pixel/size)+.5,x=pixel%size+.5,offset=pixel*4;let sum=0;for(let index=0;index<states.length;index++){const state=states[index],value=this.sourceAt(state.source,this.distanceMeters(x,y,state.geometry),0,parameters);samples[index]=value;sum+=value;}minimum=Math.min(minimum,sum);maximum=Math.max(maximum,sum);if(parameters.mode==='pressure'){let normalized=clamp(sum*gain,-1,1);if(parameters.rmsPulse==='thickness')normalized=Math.sign(normalized)*(1-Math.pow(1-Math.abs(normalized),1+pulse));else if(parameters.rmsPulse==='opacity')normalized=clamp(normalized*(1+pulse),-1,1);if(parameters.blend==='screen'){const color=colorAt(spectralStops,.5+.5*normalized),strength=.25+.75*Math.abs(normalized);pixels[offset]=255-(255-color[0])*(1-strength);pixels[offset+1]=255-(255-color[1])*(1-strength);pixels[offset+2]=255-(255-color[2])*(1-strength);}else pixels[offset]=pixels[offset+1]=pixels[offset+2]=127.5+127.5*normalized;
@@ -163,12 +166,39 @@ export class WorkshopRenderer implements DspRendererContract {
   private historyContext=this.historyRaster.getContext('2d',{alpha:false})!;
   private lastHistorySequence=-1;
   private dirty=true;
+  private lastPlaneRender=0;
+  private lastPlaneTick=0;
 
   constructor(private canvas:HTMLCanvasElement,parameters:DspParameters){this.parameters=parameters;this.context=canvas.getContext('2d',{alpha:false})!;}
   setParameters(parameters:DspParameters){this.parameters=parameters;this.dirty=true;}
   pushFrame(frame:DspAnalysisFrame){this.frame=frame;this.spectral.update(frame,this.parameters);this.plane.push(frame,this.parameters);this.dirty=true;}
   resize(width:number,height:number,pixelRatio:number){const nextWidth=Math.max(1,width),nextHeight=Math.max(1,height),nextRatio=Math.max(1,pixelRatio),logicalChanged=nextWidth!==this.width||nextHeight!==this.height||nextRatio!==this.pixelRatio;this.width=nextWidth;this.height=nextHeight;this.pixelRatio=nextRatio;if(logicalChanged)this.dirty=true;if(this.canvas.width!==Math.round(nextWidth*nextRatio)||this.canvas.height!==Math.round(nextHeight*nextRatio)){this.canvas.width=Math.round(nextWidth*nextRatio);this.canvas.height=Math.round(nextHeight*nextRatio);this.context.setTransform(nextRatio,0,0,nextRatio,0,0);this.dirty=true;}}
-  render(now:number){if(!Number.isFinite(now)||!this.dirty)return;this.dirty=false;const p=this.parameters,waveformHeight=this.waveformHeight(),size=this.rasterSize(waveformHeight),plane=p.mode==='crest'||p.mode==='pressure',sources=visualSources(p);this.canvas.dataset.layerDirections=sources.map((source,index)=>layerDirectionDegrees(source.direction,index,sources.length,p)).join(',');this.canvas.dataset.layerOrigins=sources.map((_,index)=>{const origin=layerOrigin(index,sources.length,p);return`${origin.x.toFixed(2)}:${origin.y.toFixed(2)}`}).join(',');this.context.fillStyle='#050919';this.context.fillRect(0,0,this.width,this.height);if(plane){this.plane.resize(size);this.drawContained(this.plane.render(p),waveformHeight);const diagnostics=this.plane.diagnostics();delete this.canvas.dataset.planeOverlays;this.canvas.dataset.planePressureRange=diagnostics.range.join(',');this.canvas.dataset.planeMicrophoneLagSamples=String(diagnostics.microphoneLagSamples);}else if(p.mode==='timeFrequency')this.renderHistory(size,waveformHeight);else this.renderSpectrum(size,waveformHeight);this.renderWaveform(waveformHeight);}
+  render(now:number){
+    if(!Number.isFinite(now))return;
+    const p=this.parameters,plane=p.mode==='crest'||p.mode==='pressure';
+    let planeDt=0;
+    if(plane){
+      if(this.lastPlaneRender&&now-this.lastPlaneRender<32)return;
+      planeDt=this.lastPlaneTick?Math.min(.1,Math.max(0,(now-this.lastPlaneTick)/1000)):0;
+      this.lastPlaneTick=now;this.lastPlaneRender=now;this.plane.advance(planeDt);
+    }else{
+      this.lastPlaneRender=this.lastPlaneTick=0;
+      if(!this.dirty)return;
+    }
+    this.dirty=false;
+    const waveformHeight=this.waveformHeight(),size=this.rasterSize(waveformHeight),sources=visualSources(p);
+    this.canvas.dataset.layerDirections=sources.map((source,index)=>layerDirectionDegrees(source.direction,index,sources.length,p)).join(',');
+    this.canvas.dataset.layerOrigins=sources.map((_,index)=>{const origin=layerOrigin(index,sources.length,p);return`${origin.x.toFixed(2)}:${origin.y.toFixed(2)}`}).join(',');
+    this.context.fillStyle='#050919';this.context.fillRect(0,0,this.width,this.height);
+    if(plane){
+      this.plane.resize(size);this.drawContained(this.plane.render(p),waveformHeight);
+      const diagnostics=this.plane.diagnostics();delete this.canvas.dataset.planeOverlays;
+      this.canvas.dataset.planePressureRange=diagnostics.range.join(',');
+      this.canvas.dataset.planeMicrophoneLagSamples=String(diagnostics.microphoneLagSamples);
+      this.canvas.dataset.planeFrameIntervalMs=planeDt?(planeDt*1000).toFixed(2):'0';
+    }else if(p.mode==='timeFrequency')this.renderHistory(size,waveformHeight);else this.renderSpectrum(size,waveformHeight);
+    this.renderWaveform(waveformHeight);
+  }
   destroy(){this.fftRaster.width=this.fftRaster.height=this.historyRaster.width=this.historyRaster.height=0;}
 
   private renderSpectrum(size:number,waveformHeight:number){const p=this.parameters,channels=this.spectral.allValues(p);if(!this.fftImage||this.fftImage.width!==size)this.fftImage=new ImageData(size,size);const data=this.fftImage.data,visible=visualSources(p),layers=this.spectrumGeometry(size,p,visible);
