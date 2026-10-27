@@ -1,4 +1,4 @@
-import {expect,test,type Page} from '@playwright/test';import {baseParameters,decodeSketch,encodeSketch,lessons,oscillator} from '../src/lib/dsp-for-artists/course';import {colorAt} from '../src/components/dsp-for-artists/canvas';import {oscillatorsFromParameters} from '../src/lib/dsp-for-artists/engine';import {directionalDistanceMeters,modeledOscillatorPressureAtListener,oscillatorPressure,physicalWavelength,travelingWaveTime,virtualListenerDistanceMeters,visualSources,layerOrigin,layerDirectionDegrees} from '../src/lib/dsp-for-artists/renderer';
+import {expect,test,type Page,type WebSocketRoute} from '@playwright/test';import {baseParameters,decodeSketch,encodeSketch,lessons,oscillator} from '../src/lib/dsp-for-artists/course';import {colorAt} from '../src/components/dsp-for-artists/canvas';import {oscillatorsFromParameters} from '../src/lib/dsp-for-artists/engine';import {directionalDistanceMeters,modeledOscillatorPressureAtListener,oscillatorPressure,physicalWavelength,travelingWaveTime,virtualListenerDistanceMeters,visualSources,layerOrigin,layerDirectionDegrees} from '../src/lib/dsp-for-artists/renderer';
 test.beforeEach(async({page})=>{await page.routeWebSocket('wss://rf.postoccupancy.com',()=>{})});
 async function installAudioMock(page:Page){await page.addInitScript(()=>{const metrics={contexts:0,closed:0,oscillators:0,microphones:0,connections:0,disconnects:0,starts:0,stops:0,trackStops:0,analyses:0};class Param{value=0;setTargetAtTime(value:number){this.value=value}}class Node{connect(){metrics.connections++;return this}disconnect(){metrics.disconnects++;return this}}class Oscillator extends Node{frequency=new Param();type:OscillatorType='sine';start(){metrics.starts++}stop(){metrics.stops++}}class Filter extends Node{frequency=new Param();Q=new Param();type:BiquadFilterType='lowpass'}class Gain extends Node{gain=new Param()}class Analyser extends Node{private size=2048;smoothingTimeConstant=0;minDecibels=-120;maxDecibels=0;get fftSize(){return this.size}set fftSize(value){this.size=value}get frequencyBinCount(){return this.size/2}getFloatFrequencyData(values:Float32Array){metrics.analyses++;values.fill(-100);values[5+Math.floor(performance.now()/80)%4]=-18;values[20]=-28}getFloatTimeDomainData(values:Float32Array){for(let i=0;i<values.length;i++)values[i]=.12*Math.sin(i*.12+performance.now()/180)}}class Context{state:AudioContextState='suspended';sampleRate=48000;currentTime=0;destination=new Node();constructor(){metrics.contexts++}createGain(){return new Gain()}createOscillator(){metrics.oscillators++;return new Oscillator()}createBiquadFilter(){return new Filter()}createAnalyser(){return new Analyser()}createMediaStreamSource(){metrics.microphones++;return new Node()}async resume(){this.state='running'}async suspend(){this.state='suspended'}async close(){this.state='closed';metrics.closed++}}Object.defineProperty(window,'AudioContext',{value:Context});Object.defineProperty(navigator,'mediaDevices',{value:{getUserMedia:async()=>({getTracks:()=>[{stop(){metrics.trackStops++}}]})}});Object.defineProperty(window,'__dspMetrics',{value:metrics})})}
 const metrics=(page:Page)=>page.evaluate(()=>(window as typeof window&{__dspMetrics:Record<string,number>}).__dspMetrics);
@@ -138,4 +138,28 @@ test('wide and narrow canvases contain complete visual fields below the waveform
     const canvas=page.locator('canvas');await expect.poll(async()=>await canvas.getAttribute('data-visual-bounds')).not.toBeNull();
     for(const mode of['Linear','Rings','Time'] as const){await selectSegment(page,`Visualization: ${mode}`);await expect.poll(async()=>await canvas.getAttribute('data-visual-bounds')).not.toBeNull();const result=await canvas.evaluate(node=>{const canvas=node as HTMLCanvasElement,rect=canvas.getBoundingClientRect(),values=(canvas.dataset.visualBounds??'').split(',').map(Number),pixel=canvas.getContext('2d')!.getImageData(Math.max(0,Math.floor(canvas.width-1)),Math.max(0,Math.floor(canvas.height/2)),1,1).data;return{rect:{width:rect.width,height:rect.height},x:values[0],y:values[1],side:values[2],right:values[0]+values[2],bottom:values[1]+values[3],edgeAlpha:pixel[3]}});expect(result.x).toBeGreaterThanOrEqual(0);expect(result.y).toBeGreaterThan(0);expect(result.right).toBeLessThanOrEqual(result.rect.width+.01);expect(result.bottom).toBeLessThanOrEqual(result.rect.height+.01);expect(result.side).toBeCloseTo(Math.min(result.rect.width,result.rect.height-result.y),0);expect(result.edgeAlpha).toBe(255)}
   }
+});
+
+test('Electric Sea input combines stream snapshots, limits voices, restores manual state, and cleans up',async({page})=>{
+  let socket!:WebSocketRoute;const commands:Array<Record<string,unknown>>=[];
+  await page.routeWebSocket('wss://rf.postoccupancy.com',ws=>{socket=ws;ws.onMessage(raw=>commands.push(JSON.parse(String(raw))))});
+  await page.goto('/lab/dsp-for-artists/audio-processing');
+  const input=page.locator('[data-control-section=input]');
+  await input.getByRole('button',{name:'Input: Electric Sea'}).click();
+  socket.send(JSON.stringify({type:'resident_voices',device:'osc/indoor-sky/temperature',ready:true,voices:[{id:1,active:true,frequencyHz:.05,confidence:.8}]}));
+  socket.send(JSON.stringify({type:'resident_voices',device:'osc/electric-sky/rms',ready:true,voices:[{id:1,active:true,frequencyHz:.1,confidence:.7}]}));
+  await expect(input.getByRole('status')).toContainText('Connected · 2 active voices');
+  await input.getByRole('combobox',{name:'Device / stream'}).click();
+  await expect(page.getByRole('option',{name:'osc/indoor-sky/temperature'})).toBeVisible();
+  await expect(page.getByRole('option',{name:'osc/electric-sky/rms'})).toBeVisible();
+  await page.keyboard.press('Escape');
+  await input.getByRole('slider',{name:'Maximum Voices'}).fill('1');
+  await expect(input.getByRole('status')).toContainText('1 active voice');
+  socket.send(JSON.stringify({type:'resident_voices',device:'osc/indoor-sky/temperature',ready:false,voices:[]}));
+  await expect(input.getByRole('status')).toContainText('1 active voice');
+  await input.getByRole('button',{name:'Input: Manual Oscillators'}).click();
+  await expect(page.getByRole('combobox',{name:'Oscillator count'})).toHaveText('1');
+  await expect(page.getByLabel('Frequency precise value')).toHaveValue('110');
+  await page.getByRole('navigation').getByRole('link',{name:'Electric Sea',exact:true}).click();
+  await expect.poll(()=>commands.some(command=>command.type==='resident_subscribe'&&command.enabled===false)).toBe(true);
 });

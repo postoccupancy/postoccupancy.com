@@ -26,6 +26,13 @@ export function useSignalRouter() {
   return router;
 }
 
+/** Access the stable client without subscribing React to its 100 Hz display clock. */
+export function useSignalRouterClient() {
+  const router = useContext(RouterContext);
+  if (!router) throw new Error('useSignalRouterClient requires RouterProvider');
+  return router;
+}
+
 export function useRouterInterface() {
   const model = useContext(RouterInterfaceContext);
   if (!model) throw new Error('useRouterInterface requires RouterProvider');
