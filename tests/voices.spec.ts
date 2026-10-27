@@ -88,16 +88,24 @@ test('routes notes and all beat levels, applies CC ranges, and stops output on c
   await expect.poll(async () => (await state()).sent.some(({ bytes }) => bytes[0] === 0xbf && bytes[1] === 1)).toBe(true);
   await page.getByRole('button', { name: 'electric-sky audio', exact: true }).click();
   await expect.poll(async () => (await state()).started).toBe(1);
-  await page.getByRole('checkbox', { name: `${device} notes`, exact: true }).uncheck();
+  await expect(page.getByText('1 of 8 voices allocated')).toBeVisible();
+  await page.getByRole('spinbutton', { name: 'maximum voices', exact: true }).fill('0');
+  await page.getByRole('spinbutton', { name: 'maximum voices', exact: true }).blur();
+  await expect(page.getByText('0 of 0 voices allocated')).toBeVisible();
   await expect.poll(async () => (await state()).stopped).toBe(1);
-  await page.getByRole('checkbox', { name: `${device} notes`, exact: true }).check();
+  await page.getByRole('spinbutton', { name: 'maximum voices', exact: true }).fill('8');
+  await page.getByRole('spinbutton', { name: 'maximum voices', exact: true }).blur();
   await expect.poll(async () => (await state()).started).toBe(2);
+  await page.getByRole('checkbox', { name: `${device} notes`, exact: true }).uncheck();
+  await expect.poll(async () => (await state()).stopped).toBe(2);
+  await page.getByRole('checkbox', { name: `${device} notes`, exact: true }).check();
+  await expect.poll(async () => (await state()).started).toBe(3);
   await page.getByRole('button', { name: 'panic', exact: true }).click();
   const count = (await state()).sent.length;
   socket.send(JSON.stringify(voices())); await page.waitForTimeout(100); expect((await state()).sent).toHaveLength(count);
   await page.getByRole('navigation').getByRole('link', { name: 'Indoor Sky', exact: true }).click();
   await expect.poll(async () => (await state()).audioClosed).toBe(1);
-  expect((await state()).closed).toBe(1); expect((await state()).stopped).toBe(2);
+  expect((await state()).closed).toBe(1); expect((await state()).stopped).toBe(3);
   expect(errors).toEqual([]);
 });
 

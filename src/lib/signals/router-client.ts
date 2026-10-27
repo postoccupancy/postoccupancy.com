@@ -37,6 +37,7 @@ export class RouterClient {
   private socket: WebSocket | null = null;
   private listeners = new Set<() => void>();
   private messages = new Set<(message: RouterMessage) => void>();
+  private residentSubscribers = new Set<symbol>();
   private version = 0;
   private info = new Map<string, RouterInfo>();
 
@@ -50,6 +51,19 @@ export class RouterClient {
     this.messages.add(listener);
     if (replayInfo) this.info.forEach(listener);
     return () => { this.messages.delete(listener); };
+  };
+  acquireResidentSubscription = () => {
+    const owner = Symbol('resident-subscription');
+    const wasEmpty = this.residentSubscribers.size === 0;
+    this.residentSubscribers.add(owner);
+    if (wasEmpty) this.send({ type: 'resident_subscribe', enabled: true });
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.residentSubscribers.delete(owner);
+      if (this.residentSubscribers.size === 0) this.send({ type: 'resident_subscribe', enabled: false });
+    };
   };
   send = (message: { type: string; [key: string]: unknown }) => {
     if (this.socket?.readyState !== WebSocket.OPEN) return false;
@@ -90,6 +104,7 @@ export class RouterClient {
         this.pcmRequests = [];
         this.clocks.clear();
         this.channels.forEach((channel) => { channel.ring.clear(); channel.receivedAt = 0; });
+        if (this.residentSubscribers.size > 0) this.send({ type: 'resident_subscribe', enabled: true });
         this.notify();
       };
       socket.onmessage = (event) => {

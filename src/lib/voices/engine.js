@@ -1,5 +1,8 @@
 // Adapted from signal-router/router/resident-live.js (embedded page) and
 // resident-live-controls.js. Analysis stays on the Pi; this is the output UI.
+import { mapEnvironmentalPitch } from './pitch-mapping';
+import { DEFAULT_MAXIMUM_VOICES, VoiceAllocator } from './voice-allocator';
+
 /**
  * @param {HTMLElement} root
  * @param {import('../signals/router-client').RouterClient} router
@@ -24,6 +27,8 @@ export function mountVoices(root, router) {
     lastBeatTick = performance.now();
   const synthVoices = new Map(),
     midiVoices = new Map();
+  const voiceAllocator = new VoiceAllocator();
+  let allocation = voiceAllocator.update([], DEFAULT_MAXIMUM_VOICES);
   const MIDI_HYSTERESIS = .6,
     LEGATO_OVERLAP_MS = 35,
     BEAT_CC_INTERVAL_MS = 25;
@@ -31,7 +36,9 @@ export function mountVoices(root, router) {
     midiOutputSelect = get('midi-output'),
     midiTransition = get('midi-transition'),
     midiPanic = get('midi-panic'),
-    midiStatus = get('midi-status');
+    midiStatus = get('midi-status'),
+    maximumVoices = get('maximum-voices'),
+    allocationStatus = get('allocation-status');
   const globalBeat = {
     enabled: false,
     channel: 15,
@@ -110,26 +117,19 @@ export function mountVoices(root, router) {
     limiter.connect(audioContext.destination);
   }
   function mappedMidiValues(hz, g) {
-    const lo = .05,
-      hi = 1,
-      c = Math.max(lo, Math.min(hi, hz)),
-      pos = Math.log2(c / lo) / Math.log2(hi / lo),
-      low = (Number(g.baseOctave.value) + 1) * 12,
-      continuousMidi = Math.max(0, Math.min(127, low + pos * (Number(g.span.value) * 12)));
-    return {
-      continuousMidi,
-      quantizedMidi: Math.round(continuousMidi)
-    };
+    return mapEnvironmentalPitch(hz, {
+      baseMidiNote: (Number(g.baseOctave.value) + 1) * 12,
+      pitchSpanSemitones: Number(g.span.value) * 12,
+      mode: g.pitchMode.value === 'midi' ? 'quantized' : 'continuous'
+    });
   }
   function mappedAudioFrequency(hz, g) {
-    const m = mappedMidiValues(hz, g),
-      out = g.pitchMode.value === 'midi' ? m.quantizedMidi : m.continuousMidi;
-    return 440 * Math.pow(2, (out - 69) / 12);
+    return mappedMidiValues(hz, g).oscillatorFrequencyHz;
   }
   function activeVoicesForDevice(name) {
     const r = [];
     for (const [id, m] of messages) {
-      if (deviceName(id) !== name) continue;
+      if (deviceName(id) !== name || !m.ready) continue;
       for (const v of m.voices || []) if (v.active) r.push({
         streamId: id,
         ...v
@@ -148,6 +148,19 @@ export function mountVoices(root, router) {
     const r = [];
     for (const g of groups.values()) r.push(...activeVoicesForDevice(g.name));
     return r;
+  }
+  function allocatedVoicesForDevice(name) {
+    return allocation.allocated.map(({ voice }) => voice).filter(v => (
+      deviceName(v.streamId) === name && streamSettings(v.streamId).noteEnabled
+    ));
+  }
+  function reconcileAllocation() {
+    const outputVoices = allActiveVoices().filter(voice => streamSettings(voice.streamId).noteEnabled);
+    allocation = voiceAllocator.update(outputVoices, Number(maximumVoices.value));
+    allocationStatus.textContent = allocation.allocated.length + ' of ' + allocation.maximumSlots
+      + ' voices allocated' + (allocation.activeVoiceCount > allocation.maximumSlots
+        ? ' · ' + (allocation.activeVoiceCount - allocation.maximumSlots) + ' waiting'
+        : '');
   }
   function createSynthVoice(key, g, f) {
     const o = audioContext.createOscillator(),
@@ -175,10 +188,10 @@ export function mountVoices(root, router) {
         g.bus.gain.value = 0;
         g.bus.connect(limiter);
       }
-      const voices = activeVoicesForDevice(g.name),
+      const voices = allocatedVoicesForDevice(g.name),
         norm = voices.length ? 1 / Math.pow(voices.length, .35) : 1;
       for (const v of voices) {
-        if (!g.enabled || active.size >= 128) continue;
+        if (!g.enabled) continue;
         const key = voiceKey(v.streamId, v.id),
           f = mappedAudioFrequency(v.frequencyHz, g);
         active.add(key);
@@ -258,7 +271,7 @@ export function mountVoices(root, router) {
   function syncMidi(force = false) {
     if (!midiEnabled || !midiOutput) return;
     const active = new Set();
-    for (const g of groups.values()) for (const v of activeVoicesForDevice(g.name)) {
+    for (const g of groups.values()) for (const v of allocatedVoicesForDevice(g.name)) {
       const s = streamSettings(v.streamId);
       if (!s.noteEnabled) continue;
       const key = voiceKey(v.streamId, v.id),
@@ -534,6 +547,7 @@ export function mountVoices(root, router) {
       ...v,
       streamId: message.device
     }, g)).join('') : '<span class="waiting">none</span>';
+    reconcileAllocation();
     syncAudio();
     syncMidi();
   }
@@ -641,6 +655,13 @@ export function mountVoices(root, router) {
   globalBeatEnabled.onchange = () => globalBeat.enabled = globalBeatEnabled.checked;
   globalBeatChannel.onchange = () => globalBeat.channel = Number(globalBeatChannel.value);
   globalBeatCc.onchange = () => globalBeat.cc = Number(globalBeatCc.value);
+  maximumVoices.onchange = () => {
+    const value = Math.max(0, Math.min(128, Math.floor(Number(maximumVoices.value) || 0)));
+    maximumVoices.value = String(value);
+    reconcileAllocation();
+    syncAudio();
+    syncMidi();
+  };
   const mappings = new Map();
   function clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
@@ -883,9 +904,12 @@ export function mountVoices(root, router) {
       m.reason = 'disconnected';
       m.voices = [];
     }
+    allocation = voiceAllocator.reset();
+    allocationStatus.textContent = '0 of ' + maximumVoices.value + ' voices allocated';
     renderAll();
     updateOutputAvailability();
   }
+  const releaseResidentSubscription = router.acquireResidentSubscription();
   const unsubscribe = router.subscribeMessages(data => {
     if (data instanceof ArrayBuffer) return;
     if (data.type === 'resident_voices' && typeof data.device === 'string') {
@@ -910,10 +934,6 @@ export function mountVoices(root, router) {
     silence();
     lastResidentAt = performance.now();
     status.textContent = router.status === 'connected' ? 'Connected · waiting for analysis' : 'Router ' + router.status;
-    if (router.status === 'connected') router.send({
-      type: 'resident_subscribe',
-      enabled: true
-    });
   };
   const unsubscribeStatus = router.subscribe(syncConnection);
   syncConnection();
@@ -930,10 +950,7 @@ export function mountVoices(root, router) {
     unsubscribe();
     unsubscribeStatus();
     window.removeEventListener('pagehide', silence);
-    router.send({
-      type: 'resident_subscribe',
-      enabled: false
-    });
+    releaseResidentSubscription();
     panicMidi();
     disposed = true;
     midiGeneration++;
