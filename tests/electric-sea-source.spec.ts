@@ -83,16 +83,18 @@ test('Electric Sea source filters streams, quantizes pitch, and clears on discon
   expect(router.sent.filter(message => message.enabled === true)).toHaveLength(2);
 });
 
-test('Electric Sea source reports eligible and allocated counts and applies SC per-device normalization', () => {
+test('Electric Sea source reports eligible counts without changing an allocated voice amplitude', () => {
   const router = new FakeRouter();
   const source = new ElectricSeaSource(router as unknown as RouterClient, { schedule: callback => callback() });
   source.start();
+  source.configure({ ...defaultElectricSeaSettings, maximumVoices: 1 });
+  router.message(resident('osc/shared/temperature', [1]));
+  const original = source.getSnapshot().oscillators[0];
   router.message(resident('osc/shared/temperature', [1, 2]));
   router.message(resident('osc/shared/humidity', [1, 2]));
-  source.configure({ ...defaultElectricSeaSettings, maximumVoices: 3 });
   const snapshot = source.getSnapshot();
-  expect(snapshot).toMatchObject({ activeVoiceCount: 4, allocatedVoiceCount: 3 });
-  expect(snapshot.oscillators[0].sourceAmplitude).toBeCloseTo(0.144 / Math.pow(4, 0.35), 10);
+  expect(snapshot).toMatchObject({ activeVoiceCount: 4, allocatedVoiceCount: 1 });
+  expect(snapshot.oscillators[0]).toMatchObject({ sourceVoiceKey: original.sourceVoiceKey, sourceAmplitude: original.sourceAmplitude });
   source.stop();
 });
 
