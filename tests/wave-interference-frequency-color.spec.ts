@@ -22,10 +22,10 @@ test('Electric Sea wavefronts retain their emission color across pitch and blend
  expect(changed[1]).not.toBe(warm);
  await select('Blend','Multiply');
  expect(await emittedColors()).toEqual(changed);
- await select('Blend','Color Edge');
+ await select('Blend','Color Domains');
  await page.waitForTimeout(100);
  const edge=await canvas.evaluate(node=>{const data=(node as HTMLCanvasElement).getContext('2d')!.getImageData(0,0,(node as HTMLCanvasElement).width,(node as HTMLCanvasElement).height).data;let dark=0,chromatic=0;for(let index=0;index<data.length;index+=16){const r=data[index],g=data[index+1],b=data[index+2];if(Math.max(r,g,b)<16)dark++;if(Math.max(r,g,b)-Math.min(r,g,b)>8)chromatic++;}return{dark,chromatic}});
- expect(edge.dark).toBeGreaterThan(100);
+ expect(edge.dark).toBeLessThan(100);
  expect(edge.chromatic).toBeGreaterThan(100);
  expect(await emittedColors()).toEqual(changed);
  await select('Input','Manual Oscillators');
