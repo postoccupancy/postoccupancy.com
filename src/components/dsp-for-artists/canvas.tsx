@@ -23,6 +23,6 @@ export function DspCanvas({external}:{presentation?:boolean;external?:{parameter
     return()=>{cancelAnimationFrame(animation);observer.disconnect();unsubscribe();renderer.destroy();rendererRef.current=null};
   },[course.engine,externalFrameRef,passive]);
 
-  const label=parameters.mode==='timeFrequency'?(parameters.analysis==='fft'?'spectrogram':'scalogram'):parameters.mode;
+  const label=parameters.mode==='timeFrequency'?(parameters.analysis==='fft'?'spectrogram':'scalogram'):parameters.mode==='stripes'?'spectrum':parameters.mode;
   return <Box sx={{position:'relative',width:'100%',height:'100%',minHeight:320,bgcolor:'#050919'}}><canvas ref={canvasRef} aria-label={`${label} audio visualization`} style={{display:'block',width:'100%',height:'100%'}}/></Box>;
 }
