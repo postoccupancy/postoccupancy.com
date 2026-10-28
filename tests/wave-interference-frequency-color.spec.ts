@@ -1,5 +1,20 @@
 import {expect,test,WebSocketRoute} from '@playwright/test';
 
+test('Color Domains uses the neutral background until a wave is emitted',async({page})=>{
+ await page.routeWebSocket('wss://rf.postoccupancy.com',()=>{});
+ await page.goto('/instruments/wave-interference');
+ const select=async(label:string,option:string)=>{await page.getByRole('combobox',{name:label,exact:true}).click();await page.getByRole('option',{name:option,exact:true}).click()};
+ await select('Visualization','Plane Waves');
+ await select('Blend','Color Domains');
+ const canvas=page.getByLabel('Wave Interference visualization');
+ await page.waitForTimeout(100);
+ const center=await canvas.evaluate(node=>{const canvas=node as HTMLCanvasElement,data=canvas.getContext('2d')!.getImageData(canvas.width>>1,canvas.height>>1,1,1).data;return[...data.slice(0,3)]});
+ expect(center).toEqual([5,9,25]);
+ await select('Input','Electric Sea');
+ await page.waitForTimeout(100);
+ expect(await canvas.evaluate(node=>{const canvas=node as HTMLCanvasElement,data=canvas.getContext('2d')!.getImageData(canvas.width>>1,canvas.height>>1,1,1).data;return[...data.slice(0,3)]})).toEqual([5,9,25]);
+});
+
 test('Electric Sea wavefronts retain their emission color across pitch and blend changes',async({page})=>{
  let socket!:WebSocketRoute;
  await page.routeWebSocket('wss://rf.postoccupancy.com',ws=>{socket=ws});

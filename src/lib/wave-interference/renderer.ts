@@ -50,15 +50,15 @@ export class WaveInterferenceRenderer{
   this.canvas.dataset.planeAmplitudeDivisor=String(amplitudeDivisor);
   this.canvas.dataset.planeLayerColors=colors.map(color=>`${color>>16},${color>>8&255},${color&255}`).join('|');
   for(let pixel=0;pixel<PLANE_SIZE*PLANE_SIZE;pixel++){
-   const previousOwner=this.edgeOwner[pixel];let sum=0,weight=0,cr=0,cg=0,cb=0,dominantAmount=-1,dominantLayer=-1,dominantColor=0,previousAmount=-1,previousColor=0;
+   const previousOwner=this.edgeOwner[pixel];let sum=0,weight=0,presence=0,cr=0,cg=0,cb=0,dominantAmount=-1,dominantLayer=-1,dominantColor=0,previousAmount=-1,previousColor=0;
    for(let layer=0;layer<this.geometryCache.length;layer++){
     const geometry=this.geometryCache[layer],index=geometry.indices[pixel],fraction=geometry.fractions[pixel],sourceAmp=geometry.lookupAmp[index]+(geometry.lookupAmp[index+1]-geometry.lookupAmp[index])*fraction,amp=this.environmental?clamp(sourceAmp+(this.state.exposure-25)/54):sourceAmp,phase=geometry.lookupPhase[index]+(geometry.lookupPhase[index+1]-geometry.lookupPhase[index])*fraction,waveNumber=geometry.lookupWaveNumber[index]+(geometry.lookupWaveNumber[index+1]-geometry.lookupWaveNumber[index])*fraction,colorLookup=geometry.lookupColorPosition!,colorPosition=colorLookup[index]+(colorLookup[index+1]-colorLookup[index])*fraction,value=amp*Math.cos(phase+waveNumber*geometry.phaseDistance),amount=Math.abs(value),color=frequencyColor(colorPosition);
-    sum+=value;weight+=amount;cr+=amount*(color>>16);cg+=amount*(color>>8&255);cb+=amount*(color&255);if(amount>dominantAmount){dominantAmount=amount;dominantLayer=layer;dominantColor=color;}if(layer===previousOwner){previousAmount=amount;previousColor=color;}
+    sum+=value;weight+=amount;presence+=sourceAmp;cr+=amount*(color>>16);cg+=amount*(color>>8&255);cb+=amount*(color&255);if(amount>dominantAmount){dominantAmount=amount;dominantLayer=layer;dominantColor=color;}if(layer===previousOwner){previousAmount=amount;previousColor=color;}
    }
    const normalized=clamp(sum/amplitudeDivisor,-1,1),colorPulse=this.state.rmsLuminosity?this.pulseEnvelope*2:0,gray=127.5+127.5*normalized,rHue=weight>1e-8?cr/weight:127.5,gHue=weight>1e-8?cg/weight:127.5,bHue=weight>1e-8?cb/weight:127.5,rMix=rHue/255,gMix=gHue/255,bMix=bHue/255,average=(rMix+gMix+bMix)/3,chroma=1.5;
    if(edge)this.edgePressure[pixel]=normalized;
    let r:number,g:number,b:number;
-   if(edge){if(colorEdge){const retainPrevious=previousAmount>=0&&previousAmount>=dominantAmount*.85,owner=retainPrevious?previousOwner:dominantLayer,color=retainPrevious?previousColor:dominantColor;this.edgeOwner[pixel]=owner;r=color>>16;g=color>>8&255;b=color&255;}else r=g=b=255;}
+   if(edge){if(colorEdge){const retainPrevious=previousAmount>=0&&previousAmount>=dominantAmount*.85,owner=retainPrevious?previousOwner:dominantLayer,color=retainPrevious?previousColor:dominantColor;this.edgeOwner[pixel]=owner;if(presence>1e-5){r=color>>16;g=color>>8&255;b=color&255;}else{r=5;g=9;b=25;}}else r=g=b=255;}
    else if(screen){const light=clamp(Math.max(0,normalized)*(1+colorPulse));r=255*light*clamp(average+(rMix-average)*chroma);g=255*light*clamp(average+(gMix-average)*chroma);b=255*light*clamp(average+(bMix-average)*chroma);}
    else{const denominator=Math.max(.15,average),base=clamp(gray+(gray-127.5)*colorPulse,0,255);r=clamp(base*(1+chroma*(rMix/denominator-1)),0,255);g=clamp(base*(1+chroma*(gMix/denominator-1)),0,255);b=clamp(base*(1+chroma*(bMix/denominator-1)),0,255);}
    const offset=pixel*4;pixels[offset]=Math.round(r);pixels[offset+1]=Math.round(g);pixels[offset+2]=Math.round(b);pixels[offset+3]=255;
