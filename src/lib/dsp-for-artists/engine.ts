@@ -29,6 +29,7 @@ export interface DspAnalysisFrame {
   fftBinsDb: Float32Array<ArrayBuffer>;
   fftBandsDb: Float32Array<ArrayBuffer>;
   cwtBandsDb?: Float32Array<ArrayBuffer>;
+  sourceFftBandsDb?: Record<string, Float32Array<ArrayBuffer>>;
   waveform: Float32Array<ArrayBuffer>;
   /** Latest microphone analyser window for the responsive waveform strip. */
   microphoneWaveform?: Float32Array<ArrayBuffer>;
@@ -62,6 +63,8 @@ interface OscillatorVoice {
   oscillator: OscillatorNode;
   filter: BiquadFilterNode;
   gain: GainNode;
+  analyser: AnalyserNode;
+  fftData: Float32Array<ArrayBuffer>;
   analysisConnected: boolean;
   monitorConnected: boolean;
 }
@@ -94,6 +97,7 @@ export class DspEngine implements DspEngineContract {
   private microphoneFilter: BiquadFilterNode | null = null;
   private microphoneGain: GainNode | null = null;
   private microphoneAnalyser: AnalyserNode | null = null;
+  private microphoneFftData = new Float32Array(0);
   private microphoneCapture: AudioWorkletNode | null = null;
   private microphoneCaptureSink: GainNode | null = null;
   private microphoneBlocks: Float32Array[] = [];
@@ -198,6 +202,7 @@ export class DspEngine implements DspEngineContract {
     this.microphoneFilter = null;
     this.microphoneGain = null;
     this.microphoneAnalyser = null;
+    this.microphoneFftData = new Float32Array(0);
     if(this.microphoneCapture)this.microphoneCapture.port.onmessage=null;
     this.microphoneCapture?.disconnect();
     this.microphoneCaptureSink?.disconnect();
@@ -243,6 +248,7 @@ export class DspEngine implements DspEngineContract {
       voice.oscillator.disconnect();
       voice.filter.disconnect();
       voice.gain.disconnect();
+      voice.analyser.disconnect();
     }
     this.voices.clear();
     const context = this.context;
@@ -292,11 +298,17 @@ export class DspEngine implements DspEngineContract {
         const oscillator = this.context.createOscillator();
         const filter = this.context.createBiquadFilter();
         const gain = this.context.createGain();
+        const analyser = this.context.createAnalyser();
+        analyser.fftSize = this.parameters.fftSize;
+        analyser.smoothingTimeConstant = 0;
+        analyser.minDecibels = -120;
+        analyser.maxDecibels = 0;
         filter.type = 'lowpass';
         oscillator.connect(filter);
         filter.connect(gain);
+        gain.connect(analyser);
         oscillator.start();
-        voice = { oscillator, filter, gain, analysisConnected: false, monitorConnected: false };
+        voice = { oscillator, filter, gain, analyser, fftData:new Float32Array(analyser.frequencyBinCount), analysisConnected: false, monitorConnected: false };
         this.voices.set(config.id, voice);
       }
       const now = this.context.currentTime;
@@ -305,6 +317,7 @@ export class DspEngine implements DspEngineContract {
       voice.filter.frequency.setTargetAtTime(config.cutoff, now, 0.01);
       voice.filter.Q.setTargetAtTime(config.q, now, 0.01);
       voice.gain.gain.setTargetAtTime(config.generating ? config.level : 0, now, 0.01);
+      if(voice.analyser.fftSize!==this.parameters.fftSize){voice.analyser.fftSize=this.parameters.fftSize;voice.fftData=new Float32Array(voice.analyser.frequencyBinCount);}
       const analyze = config.analyzing;
       if (analyze !== voice.analysisConnected) {
         if (analyze) voice.gain.connect(this.analysisBus); else voice.gain.disconnect(this.analysisBus);
@@ -346,6 +359,9 @@ export class DspEngine implements DspEngineContract {
     if(this.microphoneEnabledRuntime&&this.microphoneBlocks.length){const length=this.microphoneBlocks.reduce((sum,block)=>sum+block.length,0),samples=new Float32Array(length);let offset=0;for(const block of this.microphoneBlocks){samples.set(block,offset);offset+=block.length;}this.microphoneBlocks=[];microphoneSamples=samples;}
     else if(microphoneWaveform){const count=Math.min(microphoneWaveform.length,Math.round(this.context.sampleRate*DSP_ANALYSIS_INTERVAL_MS/1000));microphoneSamples=microphoneWaveform.slice(microphoneWaveform.length-count);}
     const fftBandsDb = this.fftBands(fftBinsDb);
+    const sourceFftBandsDb:Record<string,Float32Array<ArrayBuffer>>={};
+    for(const[id,voice]of this.voices){if(voice.fftData.length!==voice.analyser.frequencyBinCount)voice.fftData=new Float32Array(voice.analyser.frequencyBinCount);voice.analyser.getFloatFrequencyData(voice.fftData);sourceFftBandsDb[id]=this.fftBands(voice.fftData,voice.analyser.fftSize);}
+    if(this.microphoneEnabledRuntime&&this.microphoneAnalyser){if(this.microphoneFftData.length!==this.microphoneAnalyser.frequencyBinCount)this.microphoneFftData=new Float32Array(this.microphoneAnalyser.frequencyBinCount);this.microphoneAnalyser.getFloatFrequencyData(this.microphoneFftData);sourceFftBandsDb.microphone=this.fftBands(this.microphoneFftData,this.microphoneAnalyser.fftSize);}
     let cwtBandsDb: Float32Array<ArrayBuffer> | undefined;
     if (this.parameters.analysis === 'cwt') cwtBandsDb = this.cwtBands();
     let energy = 0;
@@ -358,6 +374,7 @@ export class DspEngine implements DspEngineContract {
       fftBinsDb,
       fftBandsDb,
       cwtBandsDb,
+      sourceFftBandsDb,
       waveform,
       microphoneWaveform,
       microphoneSamples,
@@ -381,9 +398,9 @@ export class DspEngine implements DspEngineContract {
     }catch{ /* The analyser suffix remains a bounded compatibility fallback. */ }
   }
 
-  private fftBands(bins: Float32Array<ArrayBuffer>) {
+  private fftBands(bins: Float32Array<ArrayBuffer>,fftSize=this.analyser!.fftSize) {
     const output = new Float32Array(DSP_BANDS);
-    const binHz = this.context!.sampleRate / this.analyser!.fftSize;
+    const binHz = this.context!.sampleRate / fftSize;
     for (let index = 0; index < DSP_BANDS; index++) {
       const leftHz = index === 0 ? DSP_MIN_HZ : Math.sqrt(dspBandFrequency(index - 1) * dspBandFrequency(index));
       const rightHz = index === DSP_BANDS - 1 ? DSP_MAX_HZ : Math.sqrt(dspBandFrequency(index) * dspBandFrequency(index + 1));
