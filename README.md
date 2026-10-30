@@ -65,12 +65,12 @@ DSP for Artists contains a local MDX + React example. The two node pages display
 
 Spectrum combines normalized spectral intensities before applying its color palette. The same calculation is used for Separate sources and Combined output; only the analyzer data differs. These controls are signal-domain operations, not CSS pixel compositing:
 
-- **Add** sums active layer intensities and clamps the result to 1. It is comparable to additive or `plus-lighter` compositing, but it operates on a scalar spectrum before color mapping and does not divide by layer count.
-- **Multiply** multiplies active spectral intensities. A zero/absent spectral layer is treated as the neutral value so adding an inactive layer cannot erase or dim existing layers. This differs from CSS `mix-blend-mode: multiply`, which multiplies already-colored RGB channels and uses white as its neutral color.
+- **Add** uses the arithmetic mean of layers with spectral energy at that pixel. Empty layers are neutral, repeated layers retain their intensity, and adding voices cannot drive the whole field to the top of the palette. This is intentionally not CSS additive or `plus-lighter` compositing, which sums already-colored pixels and can saturate.
+- **Multiply** uses the geometric mean of layers with spectral energy at that pixel. Empty layers are neutral and overlapping layers retain their relative contrast without exponentially darkening as oscillator count rises. This differs from CSS `mix-blend-mode: multiply`, which directly multiplies already-colored RGB channels and uses white as its neutral color.
 - **Maximum** selects the strongest layer intensity at each pixel. CSS has no equivalent standard blend mode.
 - **Blend** linearly interpolates between the Add and Multiply scalar results using Blend amount. CSS has no equivalent single blend mode.
 
-Exposure, gate, adaptive gain, contrast, smoothing, and persistence are applied to each analyzer through the shared spectral pipeline before blending. Oscillator count does not normalize or reduce an existing layer’s visual intensity; overlaps alone change the combined result.
+Exposure, gate, adaptive gain, contrast, smoothing, and persistence are applied to each analyzer through the shared spectral pipeline before blending. Add and Multiply normalize only across layers that contain energy at the current pixel, so oscillator count alone does not reduce an existing layer or saturate the canvas.
 
 ## Live node dashboards
 
