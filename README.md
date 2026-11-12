@@ -1,5 +1,16 @@
 # Post Occupancy
 
+To choose the homepage, change only `homepage` in `src/content/site.ts`:
+
+```ts
+export const homepage = '/lab/dsp-for-artists';
+```
+
+Use the existing page's canonical path, such as `/nodes/indoor-sky` or
+`/instruments/wave-interference`, not `/`. Visiting `/` (including the site title
+and Return home links) temporarily redirects there. Page URLs and navigation stay
+unchanged; rebuild/redeploy after changing the value.
+
 A minimal Next.js App Router, React, TypeScript, and MUI site for documentation and interactive applications. The shell takes its layout cues from the Devias documentation site and the local v6 documentation navigation, with a full-height, collapsible sidebar and no top app bar.
 
 ## Run locally

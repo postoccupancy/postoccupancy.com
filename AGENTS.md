@@ -12,6 +12,13 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 Updated 2026-09-28. This file records agreed direction and implementation context for future work. Check the actual source and Git state before acting; live service availability and dependency versions can change. `README.md` contains the user-facing development guide. `CLAUDE.md` imports this file.
 
+## Homepage selection (2026-11-12)
+
+- `homepage` in `src/content/site.ts` is the single setting for the landing page. `/` uses a temporary redirect to that canonical route; the site title and Return home links continue to point to `/`.
+- DSP for Artists now renders at `/lab/dsp-for-artists`, including its metadata and stable navigation entry. It remains the default homepage. To change the homepage, edit only `homepage` to another existing page path and rebuild; do not move page implementations or retarget navigation entries.
+- Validation: production build/TypeScript, focused ESLint, diff whitespace checks and all eight navigation browser tests passed with Pi WebSockets mocked.
+- Prepared on `fix/homepage-selection` from remote main `84ba81c` in an isolated worktree because the existing local main is diverged. Existing main/feature histories are preserved; no push or deployment requested.
+
 ## Product direction and constraints
 
 - Build `postoccupancy.com` as a technical documentation site containing substantial running React applications alongside explanatory content.

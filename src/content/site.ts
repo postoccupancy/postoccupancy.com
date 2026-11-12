@@ -11,10 +11,13 @@ export interface NavigationGroup {
   items: SitePage[];
 }
 
+// Change this path to choose which page opens when someone visits /.
+export const homepage = '/lab/dsp-for-artists';
+
 export const groups: NavigationGroup[] = [
   {
     title: 'Lab', id: 'lab', items: [
-      { title: 'DSP for Artists', href: '/', description: 'Sequential, interactive material exploring digital signal processing for artists.', children: [
+      { title: 'DSP for Artists', href: '/lab/dsp-for-artists', description: 'Sequential, interactive material exploring digital signal processing for artists.', children: [
         { title: 'Harmonics', href: '/lab/dsp-for-artists/audio-processing', description: 'Lesson 1: audio analysis and time-frequency views.' },
         { title: 'Interference', href: '/lab/dsp-for-artists/interference-patterns', description: 'Lesson 2: traveling waves and interference.' },
         { title: 'Sandbox', href: '/lab/dsp-for-artists/make-some-art', description: 'Lesson 3: a complete audiovisual instrument.' },

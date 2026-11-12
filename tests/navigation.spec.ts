@@ -1,9 +1,18 @@
 import { expect, test } from '@playwright/test';
-import { groups, pages } from '../src/content/site';
+import { getPage, groups, homepage, pages } from '../src/content/site';
 
 // Navigation checks should not open connections to the real Pi.
 test.beforeEach(async ({ page }) => {
   await page.routeWebSocket('wss://rf.postoccupancy.com', () => {});
+});
+
+test('the root redirects temporarily to the configured homepage', async ({ page, request }) => {
+  const response = await request.get('/', { maxRedirects: 0 });
+  expect(response.status()).toBe(307);
+  expect(response.headers().location).toBe(homepage);
+  await page.goto('/');
+  await expect(page).toHaveURL(homepage);
+  await expect(page).toHaveTitle(`${getPage(homepage).title} | Post Occupancy Media`);
 });
 
 test('all named routes render their title, breadcrumbs, and selected navigation', async ({ page }) => {
@@ -41,11 +50,9 @@ test('sections collapse and active sections reopen on history navigation', async
   await expect(sensors).toHaveAttribute('aria-expanded', 'true');
   await expect(nav.getByRole('link', { name: 'Indoor Sky' })).toBeVisible();
   await page.getByRole('link', { name: 'Post Occupancy Media', exact: true }).click();
-  await expect(page).toHaveURL('/');
-  await expect(page.getByRole('heading', { level: 1, name: 'DSP for Artists', exact: true })).toBeVisible();
-  await expect(page).toHaveTitle('DSP for Artists | Post Occupancy Media');
-  await expect(page.getByRole('navigation', { name: 'Breadcrumb', exact: true })).toHaveText('Lab/DSP for Artists');
-  await expect(nav.getByRole('link', { name: 'DSP for Artists', exact: true })).toHaveAttribute('aria-current', 'page');
+  await expect(page).toHaveURL(homepage);
+  await expect(page).toHaveTitle(`${getPage(homepage).title} | Post Occupancy Media`);
+  await expect(nav.getByRole('link', { name: getPage(homepage).title, exact: true })).toHaveAttribute('aria-current', 'page');
 });
 
 test('collapsing the sidebar releases the full viewport width and retains a keyboard control', async ({ page }) => {
@@ -88,8 +95,8 @@ test('unknown routes render a real 404', async ({ page }) => {
   expect(response?.status()).toBe(404);
   await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible();
   await page.getByRole('link', { name: 'Return home' }).click();
-  await expect(page).toHaveURL('/');
-  await expect(page.getByRole('heading', { level: 1, name: 'DSP for Artists', exact: true })).toBeVisible();
+  await expect(page).toHaveURL(homepage);
+  await expect(page).toHaveTitle(`${getPage(homepage).title} | Post Occupancy Media`);
 });
 
 test('removed pages are absent and moved pages preserve useful legacy links', async ({ page }) => {
@@ -103,11 +110,11 @@ test('removed pages are absent and moved pages preserve useful legacy links', as
   await page.goto('/hubs/electric-sea');
   await expect(page).toHaveURL('/interfaces/electric-sea');
   await page.goto('/lab/dsp-for-artists');
-  await expect(page).toHaveURL('/');
+  await expect(page).toHaveURL('/lab/dsp-for-artists');
 });
 
 test('MDX prose surrounds a working React wave explorer', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/lab/dsp-for-artists');
   await expect(page.getByRole('heading', { name: 'Frequency and amplitude', exact: true })).toBeVisible();
   const explorer = page.getByRole('region', { name: 'Wave explorer' });
   const frequency = explorer.getByRole('slider', { name: /Frequency/ });
