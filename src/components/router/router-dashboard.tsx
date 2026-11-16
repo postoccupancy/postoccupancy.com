@@ -2,13 +2,12 @@
 
 import NextLink from 'next/link';
 import { Box, Button, Link, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography } from '@mui/material';
-import { useRouterInterface, useSignalRouter } from '@/components/signals/router-provider';
+import { useRouterInterface, useRouterUrl, useSignalRouter } from '@/components/signals/router-provider';
+import { routerHttpOrigin } from '@/lib/signals/router-url';
 import { RouterInterface, connectionType, normalized, type Assignment, type SignalRow } from '@/lib/router/router-interface';
 
-const routerOrigin = () => (process.env.NEXT_PUBLIC_SIGNAL_ROUTER_URL || 'wss://rf.postoccupancy.com').replace(/^ws/, 'http');
-function external(path: string) { return new URL(path, routerOrigin()).href; }
 function nodeLink(name: string) {
-  return name === 'electric-sky' || name === 'indoor-sky' ? '/' : undefined;
+  return name === 'electric-sky' || name === 'indoor-sky' ? '/nodes/indoor-sky' : undefined;
 }
 function rawValue({ signal }: SignalRow) {
   if (signal.type === 'audio') return signal.available ? `Live · ${signal.sampleRate || 0} Hz` : 'Idle';
@@ -44,6 +43,8 @@ function Heading({ children }: { children: React.ReactNode }) {
 }
 
 export function RouterDashboard() {
+  const routerUrl = useRouterUrl();
+  const external = (path: string) => new URL(path, routerHttpOrigin(routerUrl)).href;
   const router = useSignalRouter();
   const model = useRouterInterface();
   const { server, client, clients } = model;

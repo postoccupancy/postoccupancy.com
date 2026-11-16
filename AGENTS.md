@@ -18,8 +18,18 @@ Updated 2026-09-28. This file records agreed direction and implementation contex
 - DSP for Artists now renders at `/lab/dsp-for-artists`, including its metadata and stable navigation entry. It remains the default homepage. To change the homepage, edit only `homepage` to another existing page path and rebuild; do not move page implementations or retarget navigation entries.
 - Validation: production build/TypeScript, focused ESLint, diff whitespace checks and all eight navigation browser tests passed with Pi WebSockets mocked.
 - Prepared on `fix/homepage-selection` from remote main `84ba81c` in an isolated worktree because the existing local main is diverged. Existing main/feature histories are preserved; no push or deployment requested.
+## LAN router selection (2026-10-25)
+
+- Integrated into current main on 2026-11-16. Preserved the stable-client hook and configurable homepage; sensor links now use /nodes/indoor-sky rather than assuming / is the Signals dashboard. Updated LAN fixtures for current sample batches and covered IPv6 normalization/connected-origin links. Production build/TypeScript, focused lint and all 14 LAN/router/navigation browser tests passed. User authorized pushing main and deleting feat/lan-router after verifying the merge; no Pi/service/firmware changes are involved.
+
+- Settings > General > Electric Sea connection accepts an explicit LAN HTTP(S)/WebSocket address, saves it under `postoccupancy:router-url:v1`, and reloads to release the prior router/audio/MIDI resources. Browser override takes precedence over `NEXT_PUBLIC_SIGNAL_ROUTER_URL` and the public default; Use default router removes it. Corrupt saved values fall back to the deployment default.
+- One root RouterClient still serves every page. Router links and the settings endpoint display use the selected URL. HTTPS pages reject insecure WS overrides. No discovery scans, automatic fallback, proxy, Pi changes, or transport/DSP changes were added. Offline operation requires this site to run locally and a reachable Pi over Ethernet or Pi Wi-Fi; certificate trust and browser local-network permission may need user action.
+- Prepared on `feat/lan-router` from remote `main` (`1aa5724`), excluding the 13 commits on local `main`. Tests mock routers and never send synthetic readings to the live Pi.
+- Validation: production build and type checking passed; full lint has zero errors and three existing Plane Waves reference warnings. All 34 LAN/router/Signals test cases passed. Windows Playwright remained in server teardown after reporting all cases and required interruption. Actual venue/Pi connectivity and browser certificate trust remain installation checks; no push performed.
 
 ## Product direction and constraints
+
+- After merging a completed feature into main, verify its commits are incorporated, delete its feature branch and remove any temporary worktree. Preserve unmerged work first; do not delete active features merely because an earlier version was merged.
 
 - Build `postoccupancy.com` as a technical documentation site containing substantial running React applications alongside explanatory content.
 - Primary layout reference: https://material-kit-pro-react-docs.devias.io/introduction. Reproduce the useful documentation shell with ordinary Next.js, React, and MUI; do not turn this into the generic Devias dashboard.

@@ -74,6 +74,16 @@ DSP for Artists contains a local MDX + React example. The two node pages display
 
 ## Live node dashboards
 
+### Connecting without venue internet
+
+Run this site locally and connect the computer to the Pi by Ethernet (directly or through a switch), or join the Pi's local Wi-Fi access point. Internet access is not required, but the computer must have a working network route to the Pi.
+
+Open **Settings > General > Electric Sea connection**, enter the address that opens Electric Sea on the Pi, and choose **Connect to router**. For example, `https://10.0.0.1:3000` becomes `wss://10.0.0.1:3000`; use the Pi's actual address for your network. The choice is saved in this browser and reloads the page, stopping active audio and MIDI. All pages then share the selected router, and Pi application links follow that address.
+
+For a local certificate, open the Pi's HTTPS page first and accept its certificate if prompted. Allow local network access if the browser asks. HTTPS pages require a secure (`wss://`) router; a locally served HTTP site also accepts `ws://` for routers that serve plain WebSockets. The Pi's documented router uses HTTPS/WSS on port 3000. A fully offline venue also requires serving this site locally; changing the router address does not make the hosted website available offline.
+
+**Use default router** removes the browser override and restores `NEXT_PUBLIC_SIGNAL_ROUTER_URL`, or `wss://rf.postoccupancy.com` when that variable is unset. The environment variable remains available as a deployment default and requires restarting/rebuilding Next.js when changed. The site does not guess network addresses or modify Pi configuration.
+
 Open `/` for the combined Signals dashboard. The former `/nodes/electric-sky` and `/nodes/indoor-sky` routes redirect there. A single `RouterProvider` in the root providers opens `wss://rf.postoccupancy.com` and survives navigation between all pages. Set `NEXT_PUBLIC_SIGNAL_ROUTER_URL` in `.env.local` to override that address, then restart/rebuild Next.js. Each browser tab has its own connection.
 
 - `src/components/signals/router-provider.tsx`: root provider for the shared router client and global router-interface model.
