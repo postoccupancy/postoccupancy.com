@@ -20,6 +20,7 @@ function pcm(rate = 16000, bits = 16) {
 function capabilities(socket: WebSocketRoute) {
   socket.send(JSON.stringify({ type: 'audio', device: 'pcm/electric-sky/audio', enabled: false }));
   socket.send(JSON.stringify({ type: 'audio', device: 'pcm/indoor-sky/audio', enabled: false }));
+  socket.send(JSON.stringify({ type: 'audio', device: 'pcm/test-source/audio', enabled: false }));
 }
 
 test('selects discovered signals, plots all views, and keeps query history on one socket', async ({ page }) => {
@@ -87,16 +88,16 @@ test('switches PCM and derived subscriptions, gates old packets, and resubscribe
   sockets[0].send(JSON.stringify({ type: 'pcm_stream', device: 'pcm/electric-sky/audio', available: true }));
   sockets[0].send(Buffer.from([0, 1])); sockets[0].send(pcm());
   await expect(page.locator('[data-viz=sourceStats]')).toContainText('16000.0 Hz');
-  await page.getByRole('combobox', { name: 'Signal', exact: true }).selectOption('pcm/indoor-sky/audio');
+  await page.getByRole('combobox', { name: 'Signal', exact: true }).selectOption('pcm/test-source/audio');
   await expect.poll(() => commands).toContainEqual(expect.objectContaining({ type: 'pcm_subscribe', device: 'pcm/electric-sky/audio', enabled: false }));
   sockets[0].send(pcm());
   await expect(page.locator('[data-viz=sourceStats]')).toHaveText('—');
-  sockets[0].send(JSON.stringify({ type: 'pcm_stream', device: 'pcm/indoor-sky/audio', available: true }));
+  sockets[0].send(JSON.stringify({ type: 'pcm_stream', device: 'pcm/test-source/audio', available: true }));
   sockets[0].send(pcm(8000, 4));
   await expect(page.locator('[data-viz=sourceStats]')).toContainText('8000.0 Hz');
   sockets[0].close();
   await expect.poll(() => sockets.length).toBe(2);
-  await expect.poll(() => commands.filter((m) => m.type === 'pcm_subscribe' && m.device === 'pcm/indoor-sky/audio' && m.enabled)).toHaveLength(2);
+  await expect.poll(() => commands.filter((m) => m.type === 'pcm_subscribe' && m.device === 'pcm/test-source/audio' && m.enabled)).toHaveLength(2);
   const derived = 'osc/electric-sky/bass';
   sockets[1].send(JSON.stringify({ type: 'osc', device: derived, value: 0.2 }));
   await page.getByRole('combobox', { name: 'Signal', exact: true }).selectOption(derived);
@@ -104,6 +105,21 @@ test('switches PCM and derived subscriptions, gates old packets, and resubscribe
   await page.getByRole('navigation').getByRole('link', { name: 'Electric Sea', exact: true }).click();
   await expect.poll(() => commands).toContainEqual(expect.objectContaining({ type: 'pcm_analysis_subscribe', device: 'pcm/electric-sky/audio', enabled: false }));
   expect(commands.filter((m) => m.type === 'pcm_source_enable' && m.enabled === false)).toEqual([]);
+});
+
+test('excludes indoor microphone audio and rejects its direct URL without subscribing', async ({ page }) => {
+  const commands: Record<string, unknown>[] = [];
+  await page.routeWebSocket('wss://rf.postoccupancy.com', (socket) => {
+    capabilities(socket);
+    socket.onMessage((message) => commands.push(JSON.parse(String(message))));
+  });
+  await page.goto(`${path}?device=pcm%2Findoor-sky%2Faudio`);
+  const selector = page.getByRole('combobox', { name: 'Signal', exact: true });
+  await expect(selector).toHaveValue('');
+  await expect(selector.locator('option[value="pcm/electric-sky/audio"]')).toHaveCount(1);
+  await expect(selector.locator('option[value="pcm/indoor-sky/audio"]')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'start audio', exact: true })).toHaveCount(0);
+  expect(commands).toEqual([]);
 });
 
 test('retains an unknown deep link, discovers MIDI, and resets after a device reboot', async ({ page }) => {

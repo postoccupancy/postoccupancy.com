@@ -11,6 +11,8 @@ interface Callbacks {
 
 /** Page-local subscriptions using the site's one WebSocket. */
 export function connectVisualizer(router: RouterClient, device: string, callbacks: Callbacks) {
+  // Also reject direct callers, independent of dropdown/query filtering.
+  if (device === 'pcm/indoor-sky/audio') return () => {};
   const isPcm = device.startsWith('pcm/');
   const derived = device.match(/^osc\/([^/]+)\/(bass|mid|high|centroid)$/);
   const pcmDevice = isPcm ? device : derived ? `pcm/${derived[1]}/audio` : null;

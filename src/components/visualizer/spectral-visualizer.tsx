@@ -15,8 +15,9 @@ function selectDevice(device: string, replace = false) {
 export function SpectralVisualizer() {
   const router = useSignalRouter();
   const params = useSearchParams();
-  const device = params.get('device') || '';
-  const devices = [...router.devices.values()].sort((a, b) => a.id.localeCompare(b.id));
+  const requestedDevice = params.get('device') || '';
+  const device = requestedDevice === 'pcm/indoor-sky/audio' ? '' : requestedDevice;
+  const devices = [...router.devices.values()].filter((item) => item.id !== 'pcm/indoor-sky/audio').sort((a, b) => a.id.localeCompare(b.id));
   // Default only to a scalar; discovering audio must not silently enable a mic.
   const firstScalar = devices.find((item) => item.kind === 'scalar')?.id;
   useEffect(() => { if (!device && firstScalar) selectDevice(firstScalar, true); }, [device, firstScalar]);
